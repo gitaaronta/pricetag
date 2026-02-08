@@ -2,6 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
+  basePath: '/costco',
+  assetPrefix: '/costco',
   // PWA-ready configuration
   async headers() {
     return [

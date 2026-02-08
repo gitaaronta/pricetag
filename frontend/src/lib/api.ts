@@ -2,7 +2,7 @@
  * PriceTag API client
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://avocadopeanut.com';
 
 export interface PriceSignal {
   type: string;

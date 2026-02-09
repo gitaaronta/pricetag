@@ -72,9 +72,18 @@ export default function Home() {
     );
   }
 
+  // Show results in full screen (no camera behind)
+  if (state === 'result' && result) {
+    return (
+      <main className="min-h-screen bg-gray-900">
+        <ResultCard result={result} onDismiss={handleReset} />
+      </main>
+    );
+  }
+
   return (
     <main className="h-screen w-screen relative overflow-hidden">
-      {/* Camera is always mounted for instant readiness */}
+      {/* Camera view */}
       <CameraCapture
         onCapture={handleCapture}
         disabled={state !== 'camera'}
@@ -85,13 +94,6 @@ export default function Home() {
       {state === 'processing' && (
         <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-20">
           <LoadingSpinner message="Reading price tag..." />
-        </div>
-      )}
-
-      {/* Result overlay */}
-      {state === 'result' && result && (
-        <div className="absolute inset-0 z-20">
-          <ResultCard result={result} onDismiss={handleReset} />
         </div>
       )}
 

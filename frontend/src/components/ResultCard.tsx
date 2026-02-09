@@ -36,30 +36,19 @@ export function ResultCard({ result, onDismiss }: ResultCardProps) {
   const Icon = style.icon;
 
   return (
-    <div className="h-full flex flex-col">
-      {/* Semi-transparent backdrop - tap to dismiss */}
-      <div
-        className="flex-1 bg-black/60 backdrop-blur-sm"
-        onClick={onDismiss}
-      />
-
-      {/* Result card - slides up from bottom */}
-      <div className="animate-slide-up bg-gray-900 rounded-t-3xl max-h-[80vh] overflow-y-auto">
-        {/* Handle bar */}
-        <div className="flex justify-center pt-3 pb-2">
-          <div className="w-12 h-1 bg-gray-600 rounded-full" />
-        </div>
-
-        {/* Close button */}
+    <div className="min-h-screen bg-gray-900 overflow-y-auto">
+      {/* Header with scan again button */}
+      <div className="sticky top-0 bg-gray-900/95 backdrop-blur-sm z-10 px-4 py-3 flex items-center justify-between border-b border-gray-800">
+        <h1 className="text-white font-semibold">Scan Result</h1>
         <button
           onClick={onDismiss}
-          className="absolute top-4 right-4 p-2 text-gray-400 hover:text-white"
-          aria-label="Close"
+          className="px-4 py-2 bg-blue-600 text-white rounded-full text-sm font-medium active:bg-blue-700"
         >
-          <X size={24} />
+          Scan Another
         </button>
+      </div>
 
-        <div className="px-6 pb-8">
+      <div className="px-4 py-4 pb-8">
           {/* Decision badge - the main event */}
           <div className={`${style.bg} ${style.text} rounded-2xl p-6 mb-6`}>
             <div className="flex items-center gap-3 mb-2">
@@ -136,10 +125,9 @@ export function ResultCard({ result, onDismiss }: ResultCardProps) {
             </div>
           )}
 
-          {/* Freshness indicator */}
-          <div className="mt-4 text-center">
-            <FreshnessIndicator freshness={result.freshness} />
-          </div>
+        {/* Freshness indicator */}
+        <div className="mt-4 text-center">
+          <FreshnessIndicator freshness={result.freshness} />
         </div>
       </div>
     </div>

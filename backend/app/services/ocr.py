@@ -188,13 +188,27 @@ class OCRService:
 
     def _extract_description(self, text: str, item_number: Optional[str]) -> Optional[str]:
         """Extract product description from text."""
-        # Remove numbers and special chars, get remaining words
-        words = re.findall(r'[A-Za-z]{2,}', text)
+        # Remove numbers and special chars, get remaining words (min 3 chars to filter noise)
+        words = re.findall(r'[A-Za-z]{3,}', text)
         if not words:
             return None
 
-        # Filter out common non-description words
-        skip_words = {'oz', 'lb', 'ct', 'ea', 'qt', 'gal', 'ml', 'kg', 'per', 'unit'}
-        description_words = [w for w in words if w.lower() not in skip_words]
+        # Filter out common non-description words and OCR noise
+        skip_words = {'oz', 'lb', 'ct', 'ea', 'qt', 'gal', 'ml', 'kg', 'per', 'unit',
+                      'price', 'item', 'each', 'total', 'sale', 'reg', 'save'}
+        description_words = [w for w in words if w.lower() not in skip_words and len(w) >= 3]
 
-        return ' '.join(description_words[:10]) if description_words else None
+        # If most words are very short (2-3 chars), it's likely OCR noise
+        if description_words:
+            avg_len = sum(len(w) for w in description_words) / len(description_words)
+            if avg_len < 4:
+                return None  # Likely garbage
+
+        # Take up to 6 words for description
+        result = ' '.join(description_words[:6]) if description_words else None
+
+        # Final sanity check - if it looks like random letters, skip it
+        if result and len(result) < 8:
+            return None
+
+        return result

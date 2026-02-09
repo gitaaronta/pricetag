@@ -63,7 +63,9 @@ export function ResultCard({ result, onDismiss }: ResultCardProps) {
             <div className="flex justify-between items-start mb-2">
               <div>
                 <p className="text-gray-400 text-sm">Item #{result.item_number}</p>
-                <p className="text-white font-medium selectable">{result.description}</p>
+                <p className="text-white font-medium selectable">
+                  {result.description || 'Costco Product'}
+                </p>
               </div>
               <div className="text-right">
                 <p className="text-3xl font-bold text-white">${result.price.toFixed(2)}</p>

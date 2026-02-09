@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_HOUR: int = 200
 
     # OCR settings
-    OCR_CONFIDENCE_THRESHOLD: float = 0.70
+    OCR_CONFIDENCE_THRESHOLD: float = 0.35
 
     # Quality scoring weights
     SOURCE_WEIGHT_USER_SCAN: float = 0.85

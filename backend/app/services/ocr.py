@@ -123,7 +123,7 @@ class OCRService:
             )
 
     def _preprocess_image(self, image: Image.Image) -> Image.Image:
-        """Preprocess image for better OCR accuracy."""
+        """Preprocess image for better OCR accuracy on Costco price tags."""
         # Convert to numpy array
         img_array = np.array(image)
 
@@ -133,15 +133,23 @@ class OCRService:
         else:
             gray = img_array
 
-        # Apply adaptive thresholding
-        thresh = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-        )
+        # Resize if image is too small (helps OCR accuracy)
+        height, width = gray.shape
+        if width < 800:
+            scale = 800 / width
+            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
-        # Denoise
-        denoised = cv2.fastNlMeansDenoising(thresh)
+        # Increase contrast using CLAHE (helps with varied lighting)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        enhanced = clahe.apply(gray)
 
-        return Image.fromarray(denoised)
+        # Apply bilateral filter to reduce noise while keeping edges sharp
+        denoised = cv2.bilateralFilter(enhanced, 9, 75, 75)
+
+        # Otsu's thresholding (better for varied backgrounds like yellow Costco tags)
+        _, thresh = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+        return Image.fromarray(thresh)
 
     def _extract_item_number(self, text: str) -> Optional[str]:
         """Extract 7-digit Costco item number."""

@@ -1,4 +1,4 @@
-"""PriceTag V1 - FastAPI Backend"""
+"""PriceTag V2 - FastAPI Backend with Decision Intelligence"""
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,7 +6,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.api import scan, warehouses, health
+from app.api import scan, warehouses, health, watch
 from app.core.config import settings
 from app.core.database import engine, Base
 
@@ -52,3 +52,4 @@ app.add_middleware(
 app.include_router(health.router, tags=["Health"])
 app.include_router(warehouses.router, prefix="/api/v1/warehouses", tags=["Warehouses"])
 app.include_router(scan.router, prefix="/api/v1/scan", tags=["Scan"])
+app.include_router(watch.router, prefix="/api/v1/watch", tags=["Watch"])

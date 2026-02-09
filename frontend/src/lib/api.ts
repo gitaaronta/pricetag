@@ -1,8 +1,15 @@
 /**
- * PriceTag API client
+ * PriceTag API client V2 - with decision intelligence
  */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://costco.avocadopeanut.com';
+
+// Types
+export type Intent = 'NEED_IT' | 'BARGAIN_HUNTING' | 'BROWSING';
+export type Decision = 'BUY_NOW' | 'OK_PRICE' | 'WAIT_IF_YOU_CAN';
+export type ScarcityLevel = 'PLENTY' | 'LIMITED' | 'LAST_UNITS' | 'UNKNOWN';
+export type ConfidenceLevel = 'LOW' | 'MED' | 'HIGH';
+export type TypicalOutcome = 'TYPICALLY_DROPS' | 'TYPICALLY_SELLS_OUT' | 'UNKNOWN';
 
 export interface PriceSignal {
   type: string;
@@ -17,21 +24,44 @@ export interface CommunitySignal {
   verification_count: number;
 }
 
+export interface PriceHistory {
+  seen_at_price_count_60d: number | null;
+  lowest_observed_price_60d: number | null;
+  typical_outcome: TypicalOutcome | null;
+}
+
 export interface ScanResult {
   observation_id: string;
   item_number: string;
-  description: string;
+  description: string | null;
   price: number;
+  price_ending: string | null;
   unit_price: number | null;
   unit_measure: string | null;
-  decision: 'BUY_NOW' | 'OK_PRICE' | 'WAIT_IF_YOU_CAN';
+
+  // V1 Decision
+  decision: Decision;
   decision_explanation: string;
+
+  // V2 Intelligence
+  decision_rationale: string;
+  decision_factors: string[];
+  scarcity_level: ScarcityLevel | null;
+  scarcity_explanation: string | null;
+  last_seen_days: number | null;
+  history: PriceHistory | null;
+  price_drop_likelihood: number | null;
+  confidence_level: ConfidenceLevel | null;
+  intent_applied: Intent | null;
+
+  // Legacy
   product_score: number | null;
   product_score_explanation: string | null;
   price_signals: PriceSignal[];
   community_signals: CommunitySignal[];
   freshness: string;
   confidence: number;
+  observed_at: string | null;
 }
 
 export interface Warehouse {
@@ -47,17 +77,37 @@ export interface Warehouse {
   metro_area: string | null;
 }
 
+export interface WatchItemStatus {
+  item_number: string;
+  current_price: number | null;
+  previous_price: number | null;
+  price_changed: boolean;
+  decision_changed: boolean;
+  became_clearance: boolean;
+  disappeared: boolean;
+  last_seen_days: number | null;
+  current_decision: Decision | null;
+}
+
+export interface WatchStatusResponse {
+  warehouse_id: number;
+  items: WatchItemStatus[];
+  checked_at: string;
+}
+
 /**
  * Scan a price tag image
  */
 export async function scanPriceTag(
   imageBlob: Blob,
   warehouseId: number,
-  sessionId?: string
+  sessionId?: string,
+  intent: Intent = 'BROWSING'
 ): Promise<ScanResult> {
   const formData = new FormData();
   formData.append('image', imageBlob, 'price_tag.jpg');
   formData.append('warehouse_id', warehouseId.toString());
+  formData.append('intent', intent);
   if (sessionId) {
     formData.append('session_id', sessionId);
   }
@@ -83,7 +133,8 @@ export async function manualPriceEntry(
   itemNumber: string,
   price: number,
   description?: string,
-  hasAsterisk?: boolean
+  hasAsterisk?: boolean,
+  intent: Intent = 'BROWSING'
 ): Promise<ScanResult> {
   const response = await fetch(`${API_URL}/api/v1/scan/manual`, {
     method: 'POST',
@@ -96,6 +147,7 @@ export async function manualPriceEntry(
       price,
       description,
       has_asterisk: hasAsterisk,
+      intent,
     }),
   });
 
@@ -125,6 +177,31 @@ export async function getWarehouses(zipCode?: string): Promise<Warehouse[]> {
 
   const data = await response.json();
   return data.warehouses;
+}
+
+/**
+ * Check status of watched items
+ */
+export async function checkWatchStatus(
+  warehouseId: number,
+  itemNumbers: string[]
+): Promise<WatchStatusResponse> {
+  const response = await fetch(`${API_URL}/api/v1/watch/status`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      warehouse_id: warehouseId,
+      item_numbers: itemNumbers,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to check watch status');
+  }
+
+  return response.json();
 }
 
 /**

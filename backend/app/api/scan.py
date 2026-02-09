@@ -1,6 +1,7 @@
-"""Scan endpoints - core camera-to-decision flow"""
+"""Scan endpoints V2 - core camera-to-decision flow with intelligence"""
 import hashlib
-from typing import Optional
+from typing import Optional, Literal
+from datetime import datetime
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from slowapi import Limiter
@@ -26,13 +27,14 @@ async def scan_price_tag(
     image: UploadFile = File(..., description="Photo of Costco shelf price tag"),
     warehouse_id: int = Form(..., description="Selected warehouse ID"),
     session_id: Optional[str] = Form(None, description="Client session UUID"),
+    intent: Optional[Literal['NEED_IT', 'BARGAIN_HUNTING', 'BROWSING']] = Form('BROWSING', description="User intent"),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Process a price tag photo and return buy/wait decision.
+    Process a price tag photo and return buy/wait decision with V2 intelligence.
 
     This is the core endpoint - camera capture → OCR → decision → response.
-    Target: P95 latency < 3 seconds.
+    Target: P95 latency < 2 seconds.
     """
     # Read image
     image_bytes = await image.read()
@@ -81,7 +83,7 @@ async def scan_price_tag(
         client_ip_hash=ip_hash,
     )
 
-    # Get decision
+    # Get decision with V2 intelligence
     decision = await decision_engine.get_decision(
         db=db,
         warehouse_id=warehouse_id,
@@ -89,6 +91,7 @@ async def scan_price_tag(
         current_price=extraction.price,
         price_ending=extraction.price_ending,
         has_asterisk=extraction.has_asterisk,
+        intent=intent,
     )
 
     return ScanResponse(
@@ -96,16 +99,30 @@ async def scan_price_tag(
         item_number=extraction.item_number,
         description=extraction.description,
         price=float(extraction.price),
+        price_ending=extraction.price_ending,
         unit_price=float(extraction.unit_price) if extraction.unit_price else None,
         unit_measure=extraction.unit_measure,
+        # V1 Decision
         decision=decision.verdict,
         decision_explanation=decision.explanation,
+        # V2 Intelligence
+        decision_rationale=decision.rationale,
+        decision_factors=decision.factors,
+        scarcity_level=decision.scarcity_level,
+        scarcity_explanation=decision.scarcity_explanation,
+        last_seen_days=decision.last_seen_days,
+        history=decision.history,
+        price_drop_likelihood=decision.price_drop_likelihood,
+        confidence_level=decision.confidence_level,
+        intent_applied=decision.intent_applied,
+        # Legacy
         product_score=decision.product_score,
         product_score_explanation=decision.product_score_explanation,
         price_signals=decision.price_signals,
         community_signals=decision.community_signals,
         freshness=decision.freshness,
         confidence=float(extraction.confidence),
+        observed_at=datetime.utcnow().isoformat(),
     )
 
 
@@ -138,7 +155,7 @@ async def manual_price_entry(
     price_str = f"{data.price:.2f}"
     price_ending = "." + price_str[-2:]
 
-    # Get decision
+    # Get decision with V2 intelligence
     decision = await decision_engine.get_decision(
         db=db,
         warehouse_id=data.warehouse_id,
@@ -146,6 +163,7 @@ async def manual_price_entry(
         current_price=data.price,
         price_ending=price_ending,
         has_asterisk=data.has_asterisk or False,
+        intent=data.intent or 'BROWSING',
     )
 
     return ScanResponse(
@@ -153,14 +171,28 @@ async def manual_price_entry(
         item_number=data.item_number,
         description=data.description or "Manual entry",
         price=float(data.price),
+        price_ending=price_ending,
         unit_price=None,
         unit_measure=None,
+        # V1 Decision
         decision=decision.verdict,
         decision_explanation=decision.explanation,
+        # V2 Intelligence
+        decision_rationale=decision.rationale,
+        decision_factors=decision.factors,
+        scarcity_level=decision.scarcity_level,
+        scarcity_explanation=decision.scarcity_explanation,
+        last_seen_days=decision.last_seen_days,
+        history=decision.history,
+        price_drop_likelihood=decision.price_drop_likelihood,
+        confidence_level=decision.confidence_level,
+        intent_applied=decision.intent_applied,
+        # Legacy
         product_score=decision.product_score,
         product_score_explanation=decision.product_score_explanation,
         price_signals=decision.price_signals,
         community_signals=decision.community_signals,
         freshness=decision.freshness,
         confidence=0.70,  # Manual entries have lower confidence
+        observed_at=datetime.utcnow().isoformat(),
     )

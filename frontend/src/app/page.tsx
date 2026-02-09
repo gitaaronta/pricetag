@@ -10,8 +10,10 @@ import { ErrorDisplay } from '@/components/ErrorDisplay';
 import { WhySheet } from '@/components/WhySheet';
 import { WatchConfirmation } from '@/components/WatchConfirmation';
 import { IntentToggle } from '@/components/IntentToggle';
+import { OfflineIndicator } from '@/components/OfflineIndicator';
 import { useWatchlist } from '@/hooks/useWatchlist';
 import { useIntent } from '@/hooks/useIntent';
+import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { scanPriceTag, type ScanResult } from '@/lib/api';
 
 type AppState = 'camera' | 'processing' | 'result' | 'error' | 'warehouse-select';
@@ -30,6 +32,7 @@ export default function Home() {
   // V2: Hooks
   const { addToWatchlist, removeFromWatchlist, isWatched } = useWatchlist();
   const { intent, setIntent } = useIntent();
+  const { isOnline, wasOffline, clearWasOffline } = useOnlineStatus();
 
   // Check for stored warehouse on mount
   useEffect(() => {
@@ -56,8 +59,13 @@ export default function Home() {
       setResult(scanResult);
       setState('result');
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to scan price tag';
-      setError(message);
+      // Check if offline
+      if (!navigator.onLine) {
+        setError('You\'re offline. Offline scanning coming soon!');
+      } else {
+        const message = err instanceof Error ? err.message : 'Failed to scan price tag';
+        setError(message);
+      }
       setState('error');
     }
   };
@@ -114,6 +122,13 @@ export default function Home() {
 
     return (
       <main className="min-h-screen bg-gray-900">
+        {/* Offline indicator */}
+        <OfflineIndicator
+          isOnline={isOnline}
+          wasOffline={wasOffline}
+          onDismissReconnected={clearWasOffline}
+        />
+
         <ResultCard
           result={result}
           onDismiss={handleReset}
@@ -137,6 +152,13 @@ export default function Home() {
 
   return (
     <main className="h-screen w-screen relative overflow-hidden">
+      {/* Offline indicator */}
+      <OfflineIndicator
+        isOnline={isOnline}
+        wasOffline={wasOffline}
+        onDismissReconnected={clearWasOffline}
+      />
+
       {/* Intent toggle button (top-right) */}
       <button
         onClick={() => setShowIntentToggle(true)}

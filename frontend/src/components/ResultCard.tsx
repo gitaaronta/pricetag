@@ -16,8 +16,8 @@ import {
 } from 'lucide-react';
 import type { ScanResult, PriceSignal } from '@/lib/api';
 
-// Extended result type with offline flag
-type ExtendedScanResult = ScanResult & { _offline?: boolean };
+// Extended result type with offline/preview flags
+type ExtendedScanResult = ScanResult & { _offline?: boolean; _preview?: boolean };
 
 interface ResultCardProps {
   result: ScanResult;
@@ -61,12 +61,13 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
   const Icon = style.icon;
   const scarcity = result.scarcity_level ? scarcityStyles[result.scarcity_level] : null;
   const isOffline = (result as ExtendedScanResult)._offline;
+  const isPreview = (result as ExtendedScanResult)._preview;
   const hasCachedHistory = isOffline && result.history !== null;
 
   return (
     <div className="min-h-screen bg-gray-900 overflow-y-auto">
       {/* Offline Banner */}
-      {isOffline && (
+      {isOffline && !isPreview && (
         <div className="bg-amber-600/90 text-white px-4 py-2 flex items-center justify-center gap-2 text-sm">
           <WifiOff size={16} />
           <span>Offline scan - will sync when connected</span>
@@ -77,13 +78,18 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
       <div className="sticky top-0 bg-gray-900/95 backdrop-blur-sm z-10 px-4 py-3 flex items-center justify-between border-b border-gray-800">
         <div className="flex items-center gap-2">
           <h1 className="text-white font-semibold">Scan Result</h1>
-          {isOffline && (
+          {isPreview && (
+            <span className="text-xs bg-blue-600/30 text-blue-400 px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+              Verifying...
+            </span>
+          )}
+          {isOffline && !isPreview && (
             <span className="text-xs bg-amber-600/30 text-amber-400 px-2 py-0.5 rounded-full flex items-center gap-1">
               <CloudOff size={12} />
               Offline
             </span>
           )}
-          {hasCachedHistory && (
+          {hasCachedHistory && !isPreview && (
             <span className="text-xs bg-blue-600/30 text-blue-400 px-2 py-0.5 rounded-full flex items-center gap-1">
               <Database size={12} />
               Cached

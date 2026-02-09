@@ -23,7 +23,8 @@ export interface OCRExtraction {
 const ITEM_NUMBER_PATTERN = /\b(\d{6,8})\b/g;
 const PRICE_PATTERN = /\$?\s*(\d{1,4})[.,](\d{2})\b/g;
 const UNIT_PRICE_PATTERN = /(\d+[.,]\d{2,4})\s*\/\s*(oz|lb|ct|ea|qt|gal|ml|L|kg|g)/gi;
-const ASTERISK_PATTERN = /\*/;
+// Asterisk can be read as various characters
+const ASTERISK_PATTERN = /[\*\u2022\u2217\u066D]|(?:^|\s)[*xX\+](?:\s|$)/;
 
 // Tesseract worker (singleton for reuse)
 let workerPromise: Promise<Tesseract.Worker> | null = null;
@@ -55,8 +56,9 @@ export async function extractPriceTag(
     const worker = await getWorker();
 
     // Configure for price tag recognition
+    // Include apostrophe, hyphen, and common punctuation found on price tags
     await worker.setParameters({
-      tessedit_char_whitelist: '0123456789.$*ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/., ',
+      tessedit_char_whitelist: "0123456789.$*ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz/., '-()&",
     });
 
     // Run OCR
@@ -65,8 +67,16 @@ export async function extractPriceTag(
     onProgress?.(0.9);
 
     // Parse results
-    const text = data.text;
+    let text = data.text;
     const confidence = data.confidence / 100; // Convert to 0-1
+
+    // Debug: log raw OCR output
+    console.log('[OCR Debug] Raw text:', text);
+    console.log('[OCR Debug] Tesseract confidence:', data.confidence);
+
+    // Pre-process: collapse spaced digits (e.g., "3 3 9 9 6 3 1" -> "3399631")
+    // This handles OCR reading digits with spaces
+    text = text.replace(/(\d)\s+(?=\d)/g, '$1');
 
     // Extract fields
     const itemNumber = extractItemNumber(text);

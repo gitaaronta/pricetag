@@ -42,8 +42,9 @@ export async function preprocessImage(imageBlob: Blob): Promise<Blob> {
   // Apply contrast enhancement (simplified CLAHE)
   enhanceContrast(data, width, height);
 
-  // Apply Otsu's thresholding
-  applyOtsuThreshold(data);
+  // Skip Otsu thresholding - it's too aggressive for serif fonts
+  // Tesseract works well with high-contrast grayscale
+  // applyOtsuThreshold(data);
 
   // Put processed image back
   ctx.putImageData(imageData, 0, 0);

@@ -122,73 +122,131 @@ export default function Home() {
       return;
     }
 
-    // Online mode: use server
-    try {
-      const scanResult = await scanPriceTag(imageBlob, warehouseId, undefined, intent);
+    // Online mode: hybrid approach
+    // Start both client OCR and server request in parallel
+    // Show client result quickly, then update with server result
 
-      // Save to local DB and update price cache
-      await saveResult(scanResult, warehouseId, true);
-      await updateCacheFromServer(scanResult, warehouseId);
+    const clientOcrPromise = runOcr(imageBlob).catch(() => null);
+    const serverPromise = scanPriceTag(imageBlob, warehouseId, undefined, intent).catch((err) => {
+      console.log('[Hybrid] Server failed:', err);
+      return null;
+    });
 
-      setResult(scanResult);
-      setState('result');
-    } catch (err) {
-      // If server fails while online, try client OCR as fallback
-      try {
-        const ocrResult = await runOcr(imageBlob);
+    // Wait for whichever finishes first with a valid result
+    let hasShownResult = false;
 
-        if (ocrResult.success && ocrResult.itemNumber && ocrResult.price !== null) {
-          // Try to get cached history
-          const cachedHistory = await getCachedHistory(warehouseId, ocrResult.itemNumber);
+    // Give client OCR a 2 second head start for quick feedback
+    const clientResult = await Promise.race([
+      clientOcrPromise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]);
 
-          let offlineResult = buildOfflineResult(
-            `fallback-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-            ocrResult.itemNumber,
-            ocrResult.price,
-            ocrResult.priceEnding,
-            ocrResult.hasAsterisk,
-            ocrResult.description,
-            ocrResult.unitPrice,
-            ocrResult.unitMeasure,
-            ocrResult.confidence,
-            intent
-          ) as ScanResult;
+    // Show client result immediately if valid (as preview)
+    if (clientResult && clientResult.success && clientResult.itemNumber && clientResult.price !== null) {
+      const cachedHistory = await getCachedHistory(warehouseId, clientResult.itemNumber);
 
-          // Enhance with cached history if available
-          if (cachedHistory) {
-            const enhancedDecision = makeDecision(
-              ocrResult.price,
-              ocrResult.priceEnding,
-              ocrResult.hasAsterisk,
-              intent,
-              cachedHistory,
-              null
-            );
-            offlineResult = {
-              ...offlineResult,
-              history: cachedHistory,
-              decision: enhancedDecision.decision,
-              decision_explanation: enhancedDecision.decisionExplanation,
-              decision_rationale: enhancedDecision.decisionRationale,
-              decision_factors: enhancedDecision.decisionFactors,
-            };
-          }
+      let previewResult = buildOfflineResult(
+        `preview-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        clientResult.itemNumber,
+        clientResult.price,
+        clientResult.priceEnding,
+        clientResult.hasAsterisk,
+        clientResult.description,
+        clientResult.unitPrice,
+        clientResult.unitMeasure,
+        clientResult.confidence,
+        intent
+      ) as ScanResult;
 
-          // Save as unsynced (server failed)
-          await saveResult(offlineResult, warehouseId, false);
-          await refreshPendingCount();
-
-          setResult(offlineResult);
-          setState('result');
-          return;
-        }
-      } catch {
-        // Fallback OCR also failed, show original error
+      if (cachedHistory) {
+        const enhancedDecision = makeDecision(
+          clientResult.price,
+          clientResult.priceEnding,
+          clientResult.hasAsterisk,
+          intent,
+          cachedHistory,
+          null
+        );
+        previewResult = {
+          ...previewResult,
+          history: cachedHistory,
+          decision: enhancedDecision.decision,
+          decision_explanation: enhancedDecision.decisionExplanation,
+          decision_rationale: enhancedDecision.decisionRationale,
+          decision_factors: enhancedDecision.decisionFactors,
+        };
       }
 
-      const message = err instanceof Error ? err.message : 'Failed to scan price tag';
-      setError(message);
-      setState('error');
+      // Show preview with indicator
+      setResult({ ...previewResult, _preview: true } as ScanResult);
+      setState('result');
+      hasShownResult = true;
+    }
+
+    // Wait for server result
+    const serverResult = await serverPromise;
+
+    if (serverResult) {
+      // Server succeeded - use authoritative result
+      await saveResult(serverResult, warehouseId, true);
+      await updateCacheFromServer(serverResult, warehouseId);
+      setResult(serverResult);
+      setState('result');
+    } else if (!hasShownResult) {
+      // Server failed and no client preview - try client OCR fully
+      const fullClientResult = await clientOcrPromise;
+
+      if (fullClientResult && fullClientResult.success && fullClientResult.itemNumber && fullClientResult.price !== null) {
+        const cachedHistory = await getCachedHistory(warehouseId, fullClientResult.itemNumber);
+
+        let offlineResult = buildOfflineResult(
+          `fallback-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+          fullClientResult.itemNumber,
+          fullClientResult.price,
+          fullClientResult.priceEnding,
+          fullClientResult.hasAsterisk,
+          fullClientResult.description,
+          fullClientResult.unitPrice,
+          fullClientResult.unitMeasure,
+          fullClientResult.confidence,
+          intent
+        ) as ScanResult;
+
+        if (cachedHistory) {
+          const enhancedDecision = makeDecision(
+            fullClientResult.price,
+            fullClientResult.priceEnding,
+            fullClientResult.hasAsterisk,
+            intent,
+            cachedHistory,
+            null
+          );
+          offlineResult = {
+            ...offlineResult,
+            history: cachedHistory,
+            decision: enhancedDecision.decision,
+            decision_explanation: enhancedDecision.decisionExplanation,
+            decision_rationale: enhancedDecision.decisionRationale,
+            decision_factors: enhancedDecision.decisionFactors,
+          };
+        }
+
+        // Save as unsynced (server failed)
+        await saveResult(offlineResult, warehouseId, false);
+        await refreshPendingCount();
+
+        setResult(offlineResult);
+        setState('result');
+      } else {
+        setError('Could not read price tag. Try better lighting or hold steady.');
+        setState('error');
+      }
+    } else {
+      // Had client preview but server failed - save client result as unsynced
+      if (result) {
+        await saveResult(result, warehouseId, false);
+        await refreshPendingCount();
+      }
     }
   };
 

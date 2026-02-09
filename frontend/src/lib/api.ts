@@ -27,6 +27,7 @@ export interface CommunitySignal {
 export interface PriceHistory {
   seen_at_price_count_60d: number | null;
   lowest_observed_price_60d: number | null;
+  highest_observed_price_60d?: number | null;
   typical_outcome: TypicalOutcome | null;
 }
 

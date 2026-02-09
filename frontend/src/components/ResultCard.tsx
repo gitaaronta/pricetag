@@ -10,8 +10,14 @@ import {
   Package,
   History,
   TrendingUp,
+  WifiOff,
+  Database,
+  CloudOff,
 } from 'lucide-react';
-import type { ScanResult, PriceSignal, CommunitySignal } from '@/lib/api';
+import type { ScanResult, PriceSignal } from '@/lib/api';
+
+// Extended result type with offline flag
+type ExtendedScanResult = ScanResult & { _offline?: boolean };
 
 interface ResultCardProps {
   result: ScanResult;
@@ -54,12 +60,36 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
   const style = decisionStyles[result.decision] || decisionStyles.OK_PRICE;
   const Icon = style.icon;
   const scarcity = result.scarcity_level ? scarcityStyles[result.scarcity_level] : null;
+  const isOffline = (result as ExtendedScanResult)._offline;
+  const hasCachedHistory = isOffline && result.history !== null;
 
   return (
     <div className="min-h-screen bg-gray-900 overflow-y-auto">
+      {/* Offline Banner */}
+      {isOffline && (
+        <div className="bg-amber-600/90 text-white px-4 py-2 flex items-center justify-center gap-2 text-sm">
+          <WifiOff size={16} />
+          <span>Offline scan - will sync when connected</span>
+        </div>
+      )}
+
       {/* Header */}
       <div className="sticky top-0 bg-gray-900/95 backdrop-blur-sm z-10 px-4 py-3 flex items-center justify-between border-b border-gray-800">
-        <h1 className="text-white font-semibold">Scan Result</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-white font-semibold">Scan Result</h1>
+          {isOffline && (
+            <span className="text-xs bg-amber-600/30 text-amber-400 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <CloudOff size={12} />
+              Offline
+            </span>
+          )}
+          {hasCachedHistory && (
+            <span className="text-xs bg-blue-600/30 text-blue-400 px-2 py-0.5 rounded-full flex items-center gap-1">
+              <Database size={12} />
+              Cached
+            </span>
+          )}
+        </div>
         <button
           onClick={onDismiss}
           className="px-4 py-2 bg-blue-600 text-white rounded-full text-sm font-medium active:bg-blue-700"
@@ -119,7 +149,7 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
         </div>
 
         {/* 4. Scarcity Block */}
-        {scarcity && result.scarcity_level !== 'UNKNOWN' && (
+        {scarcity && result.scarcity_level !== 'UNKNOWN' ? (
           <div className="bg-gray-800 rounded-xl p-4">
             <div className="flex items-center gap-2">
               <Package size={18} className="text-gray-400" />
@@ -134,14 +164,29 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
               </p>
             )}
           </div>
-        )}
+        ) : isOffline ? (
+          <div className="bg-gray-800/50 rounded-xl p-4">
+            <div className="flex items-center gap-2">
+              <Package size={18} className="text-gray-500" />
+              <span className="text-gray-500 text-sm">Scarcity: Not available offline</span>
+            </div>
+          </div>
+        ) : null}
 
         {/* 5. Price History Bullets */}
-        {result.history && (
+        {result.history ? (
           <div className="bg-gray-800 rounded-xl p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <History size={18} className="text-gray-400" />
-              <span className="text-white font-medium">Price History</span>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <History size={18} className="text-gray-400" />
+                <span className="text-white font-medium">Price History</span>
+              </div>
+              {hasCachedHistory && (
+                <span className="text-xs text-blue-400 flex items-center gap-1">
+                  <Database size={12} />
+                  From cache
+                </span>
+              )}
             </div>
             <div className="space-y-2 text-sm">
               {result.history.seen_at_price_count_60d !== null && result.history.seen_at_price_count_60d > 0 && (
@@ -171,7 +216,15 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
               )}
             </div>
           </div>
-        )}
+        ) : isOffline ? (
+          <div className="bg-gray-800/50 rounded-xl p-4">
+            <div className="flex items-center gap-2">
+              <History size={18} className="text-gray-500" />
+              <span className="text-gray-500 text-sm">No cached history for this item</span>
+            </div>
+            <p className="text-gray-600 text-xs mt-1">Scan again when online for full history</p>
+          </div>
+        ) : null}
 
         {/* 6. Price Drop Likelihood Meter */}
         {result.price_drop_likelihood !== null && result.confidence_level && result.confidence_level !== 'LOW' && (
@@ -197,8 +250,8 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
           </div>
         )}
 
-        {/* Show "Not enough data" if low confidence */}
-        {result.price_drop_likelihood === null || (result.confidence_level === 'LOW' && result.history === null) ? (
+        {/* Show "Not enough data" if low confidence - but not for offline (handled above) */}
+        {!isOffline && (result.price_drop_likelihood === null || (result.confidence_level === 'LOW' && result.history === null)) ? (
           <div className="bg-gray-800/50 rounded-xl p-4 text-center">
             <p className="text-gray-500 text-sm">Not enough data yet for price predictions</p>
           </div>
@@ -240,7 +293,11 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
 
         {/* Freshness indicator */}
         <div className="text-center pt-2">
-          <FreshnessIndicator freshness={result.freshness} />
+          {isOffline ? (
+            <p className="text-xs text-amber-400">Scanned offline - pending sync</p>
+          ) : (
+            <FreshnessIndicator freshness={result.freshness} />
+          )}
         </div>
       </div>
     </div>

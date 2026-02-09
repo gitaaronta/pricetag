@@ -1,18 +1,20 @@
 'use client';
 
-import { WifiOff, Wifi } from 'lucide-react';
+import { WifiOff, Wifi, Database } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 interface OfflineIndicatorProps {
   isOnline: boolean;
   wasOffline: boolean;
   onDismissReconnected?: () => void;
+  pendingCount?: number;
 }
 
 export function OfflineIndicator({
   isOnline,
   wasOffline,
-  onDismissReconnected
+  onDismissReconnected,
+  pendingCount = 0,
 }: OfflineIndicatorProps) {
   const [showReconnected, setShowReconnected] = useState(false);
 
@@ -31,9 +33,17 @@ export function OfflineIndicator({
   // Show offline banner
   if (!isOnline) {
     return (
-      <div className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium">
+      <div className="fixed top-0 left-0 right-0 z-50 bg-amber-600 text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium">
         <WifiOff size={16} />
-        <span>You're offline — scans will be saved locally</span>
+        <span>
+          Offline mode
+          {pendingCount > 0 && (
+            <span className="ml-2 inline-flex items-center gap-1">
+              <Database size={14} />
+              {pendingCount} pending
+            </span>
+          )}
+        </span>
       </div>
     );
   }
@@ -41,9 +51,12 @@ export function OfflineIndicator({
   // Show "back online" message
   if (showReconnected) {
     return (
-      <div className="fixed top-0 left-0 right-0 z-50 bg-green-600 text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium animate-pulse">
+      <div className="fixed top-0 left-0 right-0 z-50 bg-green-600 text-white px-4 py-2 flex items-center justify-center gap-2 text-sm font-medium">
         <Wifi size={16} />
-        <span>Back online — syncing data...</span>
+        <span>
+          Back online
+          {pendingCount > 0 ? ` — syncing ${pendingCount} scans...` : ''}
+        </span>
       </div>
     );
   }

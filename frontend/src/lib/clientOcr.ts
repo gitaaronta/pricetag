@@ -176,31 +176,102 @@ function extractUnitPrice(text: string): { unitPrice: number | null; unitMeasure
   return { unitPrice, unitMeasure };
 }
 
-function extractDescription(text: string, itemNumber: string | null): string | null {
-  // Get words with 3+ characters
-  const words = text.match(/[A-Za-z]{3,}/g);
+/**
+ * Check if a word looks like OCR garbage
+ */
+function isGarbageWord(word: string): boolean {
+  // Too short
+  if (word.length < 3) return true;
 
-  if (!words) return null;
+  // Repeated characters (like "aaa", "eee")
+  if (/(.)\1{2,}/.test(word)) return true;
 
-  // Filter out common non-description words and noise
-  const skipWords = new Set([
-    'oz', 'lb', 'ct', 'ea', 'qt', 'gal', 'ml', 'kg', 'per', 'unit',
-    'price', 'item', 'each', 'total', 'sale', 'reg', 'save'
-  ]);
+  // Alternating case pattern (like "aEaE", "xXxX") - sign of noise
+  let caseChanges = 0;
+  for (let i = 1; i < word.length; i++) {
+    const prevUpper = word[i - 1] === word[i - 1].toUpperCase();
+    const currUpper = word[i] === word[i].toUpperCase();
+    if (prevUpper !== currUpper) caseChanges++;
+  }
+  if (caseChanges > word.length * 0.6) return true;
 
-  const descWords = words.filter(w => !skipWords.has(w.toLowerCase()) && w.length >= 3);
+  // Single letter repeated with variations (like "aa", "ee", "xX")
+  const unique = new Set(word.toLowerCase());
+  if (unique.size === 1 && word.length > 1) return true;
 
-  // Check if it's mostly garbage (short average word length)
-  if (descWords.length > 0) {
-    const avgLen = descWords.reduce((sum, w) => sum + w.length, 0) / descWords.length;
-    if (avgLen < 4) return null;
+  // Only consonants (no vowels) - unlikely to be real word
+  if (word.length >= 4 && !/[aeiouAEIOU]/.test(word)) return true;
+
+  // Common OCR noise patterns
+  const noisePatterns = [
+    /^[aeiou]{2,}$/i,  // just vowels
+    /^[^aeiou]{4,}$/i, // just consonants (4+)
+    /^(.)\1+$/i,       // all same letter
+  ];
+  for (const pattern of noisePatterns) {
+    if (pattern.test(word)) return true;
   }
 
-  // Take up to 6 words
-  const result = descWords.slice(0, 6).join(' ');
+  return false;
+}
 
-  // Skip if too short
-  if (result.length < 8) return null;
+function extractDescription(text: string, itemNumber: string | null): string | null {
+  // Costco descriptions are typically UPPERCASE words
+  // Look for sequences of uppercase words (product names)
+  const lines = text.split('\n');
+
+  // Skip words that are noise
+  const skipWords = new Set([
+    'oz', 'lb', 'ct', 'ea', 'qt', 'gal', 'ml', 'kg', 'per', 'unit',
+    'price', 'item', 'each', 'total', 'sale', 'reg', 'save', 'sell',
+    'liter', 'litre', 'count', 'pack', 'size'
+  ]);
+
+  // Find uppercase words that look like product descriptions
+  const descriptionWords: string[] = [];
+
+  for (const line of lines) {
+    // Look for uppercase words (4+ chars to avoid noise)
+    const uppercaseWords = line.match(/[A-Z][A-Z]{3,}/g);
+    if (uppercaseWords) {
+      for (const word of uppercaseWords) {
+        const lower = word.toLowerCase();
+        if (!skipWords.has(lower) && !isGarbageWord(word)) {
+          descriptionWords.push(word);
+        }
+      }
+    }
+  }
+
+  // If we found good uppercase words, use them
+  if (descriptionWords.length >= 1) {
+    const result = descriptionWords.slice(0, 5).join(' ');
+    if (result.length >= 4) {
+      return result;
+    }
+  }
+
+  // Fallback: try mixed case words but be more strict
+  const words = text.match(/[A-Za-z]{4,}/g);
+  if (!words) return null;
+
+  const filteredWords = words.filter(w => {
+    const lower = w.toLowerCase();
+    if (skipWords.has(lower)) return false;
+    if (isGarbageWord(w)) return false;
+    // Require at least one vowel (real words have vowels)
+    if (!/[aeiouAEIOU]/.test(w)) return false;
+    return true;
+  });
+
+  if (filteredWords.length === 0) return null;
+
+  // Check if average word length is reasonable
+  const avgLen = filteredWords.reduce((sum, w) => sum + w.length, 0) / filteredWords.length;
+  if (avgLen < 4) return null;
+
+  const result = filteredWords.slice(0, 5).join(' ');
+  if (result.length < 6) return null;
 
   return result;
 }

@@ -507,16 +507,23 @@ export default function Home() {
   }
 
   return (
-    <main className="h-screen w-screen relative overflow-hidden">
-      {/* Offline indicator */}
-      <OfflineIndicator
-        isOnline={isOnline}
-        wasOffline={wasOffline}
-        onDismissReconnected={clearWasOffline}
-      />
+    <main className="fixed inset-0 overflow-hidden">
+      {/* Offline indicator - floating */}
+      <div className="absolute top-0 left-0 right-0 z-30 pointer-events-none">
+        <div className="pointer-events-auto">
+          <OfflineIndicator
+            isOnline={isOnline}
+            wasOffline={wasOffline}
+            onDismissReconnected={clearWasOffline}
+          />
+        </div>
+      </div>
 
-      {/* Top bar: sync status + settings */}
-      <div className="absolute top-14 right-4 z-20 flex items-center gap-2">
+      {/* Sync status + settings - floating top right */}
+      <div
+        className="absolute right-3 z-30 flex items-center gap-2"
+        style={{ top: 'max(60px, calc(env(safe-area-inset-top) + 48px))' }}
+      >
         <SyncStatus
           pendingCount={pendingCount}
           isOnline={isOnline}
@@ -525,14 +532,14 @@ export default function Home() {
         />
         <button
           onClick={() => setShowIntentToggle(true)}
-          className="p-3 bg-black/50 rounded-full text-white active:bg-black/70"
+          className="p-2 bg-black/50 rounded-full text-white active:bg-black/70"
           aria-label="Change intent"
         >
-          <Settings size={22} />
+          <Settings size={18} />
         </button>
       </div>
 
-      {/* Smart Camera with blur detection, burst capture, and auto-capture */}
+      {/* Smart Camera - full screen */}
       <SmartCamera
         onCapture={handleCapture}
         onBurstCapture={handleBurstCapture}

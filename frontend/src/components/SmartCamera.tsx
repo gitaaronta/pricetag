@@ -268,131 +268,120 @@ export function SmartCamera({ onCapture, onBurstCapture, onChangeWarehouse, disa
   };
 
   return (
-    <div className="relative h-full w-full bg-black">
+    <div
+      className="flex flex-col bg-black overflow-hidden"
+      style={{ height: '100dvh' }}
+    >
       {/* Hidden canvases for processing */}
       <canvas ref={canvasRef} className="hidden" />
       <canvas ref={analysisCanvasRef} className="hidden" />
 
-      {/* Video preview */}
-      <video
-        ref={videoRef}
-        autoPlay
-        playsInline
-        muted
-        className="h-full w-full object-cover"
-      />
-
-      {/* Tag detection overlay */}
-      {currentAnalysis?.tagBounds && showGuide && (
-        <div
-          className="absolute border-2 border-green-400 rounded-lg pointer-events-none transition-all duration-100"
-          style={{
-            left: `${(currentAnalysis.tagBounds.x / (analysisCanvasRef.current?.width || 1)) * 100}%`,
-            top: `${(currentAnalysis.tagBounds.y / (analysisCanvasRef.current?.height || 1)) * 100}%`,
-            width: `${(currentAnalysis.tagBounds.width / (analysisCanvasRef.current?.width || 1)) * 100}%`,
-            height: `${(currentAnalysis.tagBounds.height / (analysisCanvasRef.current?.height || 1)) * 100}%`,
-            boxShadow: quality === 'excellent' ? '0 0 20px rgba(74, 222, 128, 0.5)' : 'none',
-          }}
-        >
-          {quality === 'excellent' && (
-            <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-green-500 text-white text-xs px-2 py-1 rounded">
-              Tag detected
-            </div>
-          )}
-        </div>
-      )}
-
-
-      {/* Guide overlay - center frame guide */}
-      {showGuide && !currentAnalysis?.tagDetected && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="w-3/4 h-1/3 border-2 border-dashed border-white/50 rounded-lg flex items-center justify-center">
-            <span className="text-white/70 text-sm bg-black/30 px-3 py-1 rounded">
-              Center price tag here
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Top status bar - sharpness indicator */}
-      <div className="absolute top-0 left-0 right-0 p-4 flex items-center justify-center">
+      {/* Top status bar - fixed height */}
+      <div
+        className="flex-shrink-0 flex items-center justify-center p-3 bg-black/80"
+        style={{ paddingTop: 'max(12px, env(safe-area-inset-top))' }}
+      >
         <div className="flex items-center gap-2 bg-black/50 rounded-full px-4 py-2">
           <div className={`w-2 h-2 rounded-full ${qualityColors[quality]}`} />
           <span className="text-white text-sm">{getBlurText()}</span>
         </div>
       </div>
 
-      {/* Bottom bar with SCAN button - safe area aware */}
+      {/* Video preview - takes remaining space */}
+      <div className="flex-1 relative overflow-hidden">
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+
+        {/* Tag detection overlay */}
+        {currentAnalysis?.tagBounds && showGuide && (
+          <div
+            className="absolute border-2 border-green-400 rounded-lg pointer-events-none transition-all duration-100"
+            style={{
+              left: `${(currentAnalysis.tagBounds.x / (analysisCanvasRef.current?.width || 1)) * 100}%`,
+              top: `${(currentAnalysis.tagBounds.y / (analysisCanvasRef.current?.height || 1)) * 100}%`,
+              width: `${(currentAnalysis.tagBounds.width / (analysisCanvasRef.current?.width || 1)) * 100}%`,
+              height: `${(currentAnalysis.tagBounds.height / (analysisCanvasRef.current?.height || 1)) * 100}%`,
+              boxShadow: quality === 'excellent' ? '0 0 20px rgba(74, 222, 128, 0.5)' : 'none',
+            }}
+          />
+        )}
+
+        {/* Guide overlay - center frame guide */}
+        {showGuide && !currentAnalysis?.tagDetected && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="w-3/4 h-1/3 border-2 border-dashed border-white/50 rounded-lg flex items-center justify-center">
+              <span className="text-white/70 text-sm bg-black/30 px-3 py-1 rounded">
+                Center price tag here
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Bottom controls - fixed height with safe area */}
       <div
-        className="absolute bottom-0 left-0 right-0 p-4"
+        className="flex-shrink-0 bg-black/90 px-4 pt-3"
         style={{ paddingBottom: 'max(16px, env(safe-area-inset-bottom))' }}
       >
-        {/* Quality indicator */}
+        {/* Status indicator */}
         <div className="flex justify-center mb-3">
-          <div className="flex items-center gap-3 bg-black/60 rounded-full px-4 py-2">
+          <div className="flex items-center gap-2 text-white text-sm">
             <div className={`w-2 h-2 rounded-full ${qualityColors[quality]}`} />
-            <span className="text-white text-sm">
+            <span>
               {currentAnalysis?.tagDetected ? 'Tag detected' : 'Point at price tag'}
             </span>
-            {bufferSize > 0 && (
-              <span className="text-white/50 text-xs">({bufferSize} frames)</span>
-            )}
           </div>
         </div>
 
-        {/* Main action row */}
-        <div className="flex items-center justify-center gap-4">
+        {/* Action buttons */}
+        <div className="flex items-center justify-center gap-4 mb-2">
           {/* Settings button */}
           <button
             onClick={onChangeWarehouse}
-            className="p-3 bg-black/50 rounded-full text-white"
+            className="p-3 bg-white/10 rounded-full text-white active:bg-white/20"
           >
-            <Settings size={22} />
+            <Settings size={20} />
           </button>
 
-          {/* SCAN button - large and prominent */}
+          {/* SCAN button */}
           <button
             onClick={handleManualCapture}
             disabled={disabled || isCapturing}
-            className={`px-10 py-4 rounded-full font-bold text-lg flex items-center justify-center gap-2 ${
+            className={`px-8 py-3 rounded-full font-bold text-base flex items-center justify-center gap-2 min-w-[140px] ${
               disabled || isCapturing
-                ? 'bg-gray-500/50 text-gray-300'
+                ? 'bg-gray-600 text-gray-400'
                 : currentAnalysis?.tagDetected
                 ? 'bg-green-500 text-white active:bg-green-600'
-                : 'bg-white text-gray-800 active:bg-gray-200'
+                : 'bg-white text-gray-900 active:bg-gray-100'
             }`}
           >
             {isCapturing ? (
               <>
-                <RefreshCw size={22} className="animate-spin" />
-                Scanning...
+                <RefreshCw size={20} className="animate-spin" />
+                <span>Scanning</span>
               </>
             ) : (
               <>
-                <Camera size={22} />
-                SCAN
+                <Camera size={20} />
+                <span>SCAN</span>
               </>
             )}
           </button>
 
-          {/* Placeholder for symmetry */}
-          <div className="w-12" />
+          {/* Spacer for balance */}
+          <div className="w-11" />
         </div>
-
-        {/* Helper text */}
-        <p className="text-center text-white/50 text-xs mt-3">
-          {isCapturing
-            ? 'Processing best frames...'
-            : currentAnalysis?.tagDetected
-            ? 'Tap SCAN when ready'
-            : 'Center the price tag in the frame'}
-        </p>
       </div>
 
       {/* Error display */}
       {error && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/80">
-          <div className="bg-red-900/80 text-white p-6 rounded-xl max-w-sm text-center">
+        <div className="absolute inset-0 flex items-center justify-center bg-black/90 z-50">
+          <div className="bg-red-900/90 text-white p-6 rounded-xl max-w-sm text-center mx-4">
             <p className="mb-4">{error}</p>
             <button
               onClick={startCamera}

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Settings } from 'lucide-react';
-import { CameraCapture } from '@/components/CameraCapture';
+import { SmartCamera } from '@/components/SmartCamera';
 import { ResultCard } from '@/components/ResultCard';
 import { WarehouseSelector } from '@/components/WarehouseSelector';
 import { LoadingSpinner } from '@/components/LoadingSpinner';
@@ -18,8 +18,10 @@ import { useOnlineStatus } from '@/hooks/useOnlineStatus';
 import { useClientOcr } from '@/hooks/useClientOcr';
 import { useLocalDb } from '@/hooks/useLocalDb';
 import { useBackgroundSync } from '@/hooks/useBackgroundSync';
+import { useMultiFrameOcr } from '@/hooks/useMultiFrameOcr';
 import { scanPriceTag, type ScanResult } from '@/lib/api';
 import { buildOfflineResult, makeDecision } from '@/lib/decisionEngine';
+import type { FrameAnalysis } from '@/lib/frameAnalyzer';
 
 type AppState = 'camera' | 'processing' | 'result' | 'error' | 'warehouse-select';
 
@@ -42,6 +44,10 @@ export default function Home() {
   const { saveResult, getCachedHistory, updateCacheFromServer } = useLocalDb();
   const { pendingCount, syncStatus, syncNow, refreshPendingCount } = useBackgroundSync();
 
+  // V3: Multi-frame OCR for better accuracy
+  const { addFrame, getResult: getMultiFrameResult, reset: resetMultiFrame } = useMultiFrameOcr();
+  const [frameAnalysis, setFrameAnalysis] = useState<FrameAnalysis | null>(null);
+
   // Check for stored warehouse on mount
   useEffect(() => {
     const stored = sessionStorage.getItem('pricetag_warehouse');
@@ -52,7 +58,7 @@ export default function Home() {
     }
   }, []);
 
-  const handleCapture = async (imageBlob: Blob) => {
+  const handleCapture = async (imageBlob: Blob, analysis?: FrameAnalysis) => {
     if (!warehouseId) {
       setState('warehouse-select');
       return;
@@ -60,6 +66,21 @@ export default function Home() {
 
     setState('processing');
     setError(null);
+
+    // Store frame analysis for display
+    if (analysis) {
+      setFrameAnalysis(analysis);
+    }
+
+    // Log capture quality from smart camera
+    if (analysis) {
+      console.log('[Capture] Frame analysis:', {
+        blurScore: analysis.blurScore,
+        isSharp: analysis.isSharp,
+        tagDetected: analysis.tagDetected,
+        stability: analysis.stability,
+      });
+    }
 
     // Offline mode: use client-side OCR
     if (!isOnline) {
@@ -261,7 +282,9 @@ export default function Home() {
     setError(null);
     setShowWhySheet(false);
     setShowWatchConfirmation(false);
+    setFrameAnalysis(null);
     resetOcr();
+    resetMultiFrame();
     setState('camera');
   };
 
@@ -342,7 +365,7 @@ export default function Home() {
       />
 
       {/* Top bar: sync status + settings */}
-      <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+      <div className="absolute top-14 right-4 z-20 flex items-center gap-2">
         <SyncStatus
           pendingCount={pendingCount}
           isOnline={isOnline}
@@ -358,8 +381,8 @@ export default function Home() {
         </button>
       </div>
 
-      {/* Camera view */}
-      <CameraCapture
+      {/* Smart Camera with blur detection and auto-capture */}
+      <SmartCamera
         onCapture={handleCapture}
         disabled={state !== 'camera'}
         onChangeWarehouse={handleChangeWarehouse}
@@ -367,8 +390,14 @@ export default function Home() {
 
       {/* Processing overlay */}
       {state === 'processing' && (
-        <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-20">
+        <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-20 gap-4">
           <LoadingSpinner message={isOnline ? "Reading price tag..." : "Reading offline..."} />
+          {frameAnalysis && (
+            <div className="text-white/60 text-sm text-center">
+              <p>Blur: {Math.round(frameAnalysis.blurScore * 100)}%</p>
+              {frameAnalysis.tagDetected && <p className="text-green-400">Tag detected</p>}
+            </div>
+          )}
         </div>
       )}
 

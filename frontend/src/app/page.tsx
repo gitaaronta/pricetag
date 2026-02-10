@@ -447,6 +447,21 @@ export default function Home() {
         confidence: `${maxItemCount}/${validResults.length} frames agree on item, ${maxPriceCount}/${validResults.length} on price`
       });
 
+      // Store client OCR snapshot for feedback
+      setClientOcrSnapshot({
+        itemNumber: bestItemNumber,
+        price: bestPrice,
+        priceEnding: bestResult.priceEnding,
+        hasAsterisk: bestResult.hasAsterisk,
+        confidence: bestResult.confidence,
+        description: bestResult.description,
+      });
+
+      // Store first blob for potential artifact upload
+      if (blobs.length > 0) {
+        setCapturedImageBlob(blobs[0]);
+      }
+
       // Build result
       const cachedHistory = await getCachedHistory(warehouseId, bestItemNumber);
 
@@ -462,6 +477,11 @@ export default function Home() {
         bestResult.confidence,
         intent
       ) as ScanResult;
+
+      // Clear _offline flag if we're actually online
+      if (isOnline) {
+        (scanResult as ScanResult & { _offline?: boolean })._offline = false;
+      }
 
       // Enhance with cached history if available
       if (cachedHistory) {

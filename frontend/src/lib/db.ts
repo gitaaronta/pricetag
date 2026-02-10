@@ -4,6 +4,16 @@
  */
 
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import type {
+  ScanFeedback,
+  ScanArtifact,
+  FeedbackReason,
+  FeedbackCorrections,
+  OcrSnapshot,
+} from './feedbackTypes';
+
+// Sync queue entry types
+export type SyncQueueType = 'observation' | 'feedback' | 'artifact';
 
 // Database schema
 export interface PriceTagDB extends DBSchema {
@@ -67,7 +77,7 @@ export interface PriceTagDB extends DBSchema {
     key: string;
     value: {
       id: string;
-      type: 'observation';
+      type: SyncQueueType;
       data: Record<string, unknown>;
       createdAt: string;
       attempts: number;
@@ -75,12 +85,39 @@ export interface PriceTagDB extends DBSchema {
     };
     indexes: {
       'by-created': string;
+      'by-type': SyncQueueType;
+    };
+  };
+
+  // Feedback store - stores feedback metadata (small, quick to query)
+  scanFeedback: {
+    key: string;
+    value: ScanFeedback;
+    indexes: {
+      'by-observation': string;
+      'by-synced': number; // 0 = unsynced, 1 = synced
+      'by-created': string;
+    };
+  };
+
+  // Artifact store - stores image blobs separately (larger data)
+  // Justification: Separating blobs from metadata allows faster queries on feedback
+  // and prevents loading large blobs when just checking sync status.
+  // Blob storage is acceptable for cropped tags (~50-200KB each).
+  scanArtifacts: {
+    key: string;
+    value: ScanArtifact;
+    indexes: {
+      'by-feedback': string;
+      'by-observation': string;
+      'by-synced': number;
+      'by-sha256': string; // For deduplication
     };
   };
 }
 
 const DB_NAME = 'pricetag-offline';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Bumped for feedback stores
 
 let dbPromise: Promise<IDBPDatabase<PriceTagDB>> | null = null;
 
@@ -120,6 +157,31 @@ export function getDB(): Promise<IDBPDatabase<PriceTagDB>> {
           });
           syncQueueStore.createIndex('by-created', 'createdAt');
         }
+
+        // Version 2: Add feedback and artifact stores
+        if (oldVersion < 2) {
+          // Add by-type index to existing syncQueue if upgrading
+          if (db.objectStoreNames.contains('syncQueue')) {
+            // Note: Can't add index to existing store in upgrade, so we handle via query
+          }
+
+          // Feedback store
+          const feedbackStore = db.createObjectStore('scanFeedback', {
+            keyPath: 'id',
+          });
+          feedbackStore.createIndex('by-observation', 'observationId');
+          feedbackStore.createIndex('by-synced', 'synced');
+          feedbackStore.createIndex('by-created', 'createdAt');
+
+          // Artifact store (separate from feedback for performance)
+          const artifactStore = db.createObjectStore('scanArtifacts', {
+            keyPath: 'id',
+          });
+          artifactStore.createIndex('by-feedback', 'feedbackId');
+          artifactStore.createIndex('by-observation', 'observationId');
+          artifactStore.createIndex('by-synced', 'synced');
+          artifactStore.createIndex('by-sha256', 'sha256');
+        }
       },
     });
   }
@@ -143,6 +205,8 @@ export async function clearDatabase(): Promise<void> {
     db.clear('priceCache'),
     db.clear('warehouses'),
     db.clear('syncQueue'),
+    db.clear('scanFeedback'),
+    db.clear('scanArtifacts'),
   ]);
 }
 

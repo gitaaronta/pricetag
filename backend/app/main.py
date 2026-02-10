@@ -6,7 +6,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from slowapi.middleware import SlowAPIMiddleware
 
-from app.api import scan, warehouses, health, watch
+from app.api import scan, warehouses, health, watch, feedback
 from app.core.config import settings
 from app.core.database import engine, Base
 
@@ -53,3 +53,4 @@ app.include_router(health.router, tags=["Health"])
 app.include_router(warehouses.router, prefix="/api/v1/warehouses", tags=["Warehouses"])
 app.include_router(scan.router, prefix="/api/v1/scan", tags=["Scan"])
 app.include_router(watch.router, prefix="/api/v1/watch", tags=["Watch"])
+app.include_router(feedback.router, prefix="/api/v1/feedback", tags=["Feedback"])

@@ -22,6 +22,7 @@ import { useMultiFrameOcr } from '@/hooks/useMultiFrameOcr';
 import { scanPriceTag, type ScanResult } from '@/lib/api';
 import { buildOfflineResult, makeDecision } from '@/lib/decisionEngine';
 import type { FrameAnalysis } from '@/lib/frameAnalyzer';
+import type { OcrSnapshot } from '@/lib/feedbackTypes';
 
 type AppState = 'camera' | 'processing' | 'result' | 'error' | 'warehouse-select';
 
@@ -30,6 +31,11 @@ export default function Home() {
   const [warehouseId, setWarehouseId] = useState<number | null>(null);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Feedback-related state
+  const [capturedImageBlob, setCapturedImageBlob] = useState<Blob | null>(null);
+  const [capturedImageDimensions, setCapturedImageDimensions] = useState<{width: number; height: number} | null>(null);
+  const [clientOcrSnapshot, setClientOcrSnapshot] = useState<OcrSnapshot | null>(null);
 
   // V2: Modals
   const [showWhySheet, setShowWhySheet] = useState(false);
@@ -67,9 +73,19 @@ export default function Home() {
     setState('processing');
     setError(null);
 
+    // Store captured image for feedback artifact upload
+    setCapturedImageBlob(imageBlob);
+
     // Store frame analysis for display
     if (analysis) {
       setFrameAnalysis(analysis);
+      // Get image dimensions from analysis if tag was detected
+      if (analysis.tagBounds) {
+        setCapturedImageDimensions({
+          width: analysis.tagBounds.width,
+          height: analysis.tagBounds.height,
+        });
+      }
     }
 
     // Log capture quality from smart camera
@@ -88,6 +104,15 @@ export default function Home() {
         const ocrResult = await runOcr(imageBlob);
 
         if (ocrResult.success && ocrResult.itemNumber && ocrResult.price !== null) {
+          // Store client OCR snapshot for feedback
+          setClientOcrSnapshot({
+            itemNumber: ocrResult.itemNumber,
+            price: ocrResult.price,
+            priceEnding: ocrResult.priceEnding,
+            hasAsterisk: ocrResult.hasAsterisk,
+            confidence: ocrResult.confidence,
+            description: ocrResult.description,
+          });
           // Try to get cached history for better decision
           const cachedHistory = await getCachedHistory(warehouseId, ocrResult.itemNumber);
 
@@ -164,6 +189,16 @@ export default function Home() {
 
     // Show client result immediately if valid (as preview)
     if (clientResult && clientResult.success && clientResult.itemNumber && clientResult.price !== null) {
+      // Store client OCR snapshot for feedback
+      setClientOcrSnapshot({
+        itemNumber: clientResult.itemNumber,
+        price: clientResult.price,
+        priceEnding: clientResult.priceEnding,
+        hasAsterisk: clientResult.hasAsterisk,
+        confidence: clientResult.confidence,
+        description: clientResult.description,
+      });
+
       const cachedHistory = await getCachedHistory(warehouseId, clientResult.itemNumber);
 
       let previewResult = buildOfflineResult(
@@ -283,6 +318,10 @@ export default function Home() {
     setShowWhySheet(false);
     setShowWatchConfirmation(false);
     setFrameAnalysis(null);
+    // Clear feedback-related state
+    setCapturedImageBlob(null);
+    setCapturedImageDimensions(null);
+    setClientOcrSnapshot(null);
     resetOcr();
     resetMultiFrame();
     setState('camera');
@@ -491,6 +530,10 @@ export default function Home() {
           onWatch={handleWatch}
           isWatched={watched}
           onShowWhy={() => setShowWhySheet(true)}
+          warehouseId={warehouseId}
+          clientOcrSnapshot={clientOcrSnapshot}
+          capturedImageBlob={capturedImageBlob}
+          capturedImageDimensions={capturedImageDimensions}
         />
 
         {/* Why Sheet */}

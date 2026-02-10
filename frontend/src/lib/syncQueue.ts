@@ -2,8 +2,17 @@
  * Sync Queue - manages pending uploads to server
  */
 
-import { getDB, type PriceTagDB } from './db';
+import { getDB, type PriceTagDB, type SyncQueueType } from './db';
 import { getUnsyncedObservations, markObservationsSynced } from './observationCache';
+import {
+  getUnsyncedFeedback,
+  getUnsyncedArtifacts,
+  markFeedbackSynced,
+  markArtifactSynced,
+  getArtifact,
+} from './feedbackCache';
+import { submitFeedback, uploadArtifact } from './feedbackApi';
+import type { ScanFeedback, ScanArtifact } from './feedbackTypes';
 
 type SyncQueueEntry = PriceTagDB['syncQueue']['value'];
 type Observation = PriceTagDB['observations']['value'];
@@ -17,6 +26,11 @@ export interface SyncResult {
   synced: number;
   failed: number;
   errors: string[];
+  // Extended for feedback sync
+  feedbackSynced?: number;
+  feedbackFailed?: number;
+  artifactsSynced?: number;
+  artifactsFailed?: number;
 }
 
 /**
@@ -210,4 +224,141 @@ export async function registerBackgroundSync(tag: string = 'sync-observations'):
 export async function getSyncQueueCount(): Promise<number> {
   const db = await getDB();
   return db.count('syncQueue');
+}
+
+/**
+ * Sync a single feedback to the server
+ */
+async function syncFeedback(feedback: ScanFeedback): Promise<boolean> {
+  try {
+    const response = await submitFeedback(feedback);
+    if (response.accepted) {
+      await markFeedbackSynced(feedback.id, response.server_feedback_id);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Sync feedback failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Sync a single artifact to the server
+ */
+async function syncArtifact(artifact: ScanArtifact): Promise<boolean> {
+  try {
+    const response = await uploadArtifact(artifact);
+    if (response.sha256_verified) {
+      await markArtifactSynced(artifact.id, response.server_artifact_id);
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.error('Sync artifact failed:', error);
+    return false;
+  }
+}
+
+/**
+ * Sync all pending feedback to server
+ */
+export async function syncPendingFeedback(): Promise<SyncResult> {
+  const result: SyncResult = {
+    success: true,
+    synced: 0,
+    failed: 0,
+    errors: [],
+    feedbackSynced: 0,
+    feedbackFailed: 0,
+    artifactsSynced: 0,
+    artifactsFailed: 0,
+  };
+
+  try {
+    // First sync feedback metadata
+    const unsyncedFeedback = await getUnsyncedFeedback();
+
+    for (let i = 0; i < unsyncedFeedback.length; i += BATCH_SIZE) {
+      const batch = unsyncedFeedback.slice(i, i + BATCH_SIZE);
+
+      const batchResults = await Promise.allSettled(
+        batch.map((fb) => syncFeedback(fb))
+      );
+
+      batchResults.forEach((batchResult, index) => {
+        if (batchResult.status === 'fulfilled' && batchResult.value) {
+          result.feedbackSynced = (result.feedbackSynced || 0) + 1;
+          result.synced++;
+        } else {
+          result.feedbackFailed = (result.feedbackFailed || 0) + 1;
+          result.failed++;
+          result.errors.push(`Failed to sync feedback ${batch[index].id}`);
+        }
+      });
+    }
+
+    // Then sync artifacts (only for feedback that's already synced)
+    const unsyncedArtifacts = await getUnsyncedArtifacts();
+
+    // Only sync artifacts whose feedback is already synced
+    const artifactsToSync = [];
+    for (const artifact of unsyncedArtifacts) {
+      // Check if parent feedback is synced
+      const { getFeedback } = await import('./feedbackCache');
+      const feedback = await getFeedback(artifact.feedbackId);
+      if (feedback?.synced) {
+        artifactsToSync.push(artifact);
+      }
+    }
+
+    for (let i = 0; i < artifactsToSync.length; i += BATCH_SIZE) {
+      const batch = artifactsToSync.slice(i, i + BATCH_SIZE);
+
+      const batchResults = await Promise.allSettled(
+        batch.map((a) => syncArtifact(a))
+      );
+
+      batchResults.forEach((batchResult, index) => {
+        if (batchResult.status === 'fulfilled' && batchResult.value) {
+          result.artifactsSynced = (result.artifactsSynced || 0) + 1;
+          result.synced++;
+        } else {
+          result.artifactsFailed = (result.artifactsFailed || 0) + 1;
+          result.failed++;
+          result.errors.push(`Failed to sync artifact ${batch[index].id}`);
+        }
+      });
+    }
+
+    result.success = result.failed === 0;
+  } catch (error) {
+    result.success = false;
+    result.errors.push(error instanceof Error ? error.message : 'Unknown feedback sync error');
+  }
+
+  return result;
+}
+
+/**
+ * Sync all pending data (observations + feedback + artifacts)
+ */
+export async function syncAll(): Promise<SyncResult> {
+  // Sync observations first
+  const obsResult = await syncPendingObservations();
+
+  // Then sync feedback
+  const fbResult = await syncPendingFeedback();
+
+  // Merge results
+  return {
+    success: obsResult.success && fbResult.success,
+    synced: obsResult.synced + fbResult.synced,
+    failed: obsResult.failed + fbResult.failed,
+    errors: [...obsResult.errors, ...fbResult.errors],
+    feedbackSynced: fbResult.feedbackSynced,
+    feedbackFailed: fbResult.feedbackFailed,
+    artifactsSynced: fbResult.artifactsSynced,
+    artifactsFailed: fbResult.artifactsFailed,
+  };
 }

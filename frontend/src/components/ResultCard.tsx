@@ -15,6 +15,8 @@ import {
   CloudOff,
 } from 'lucide-react';
 import type { ScanResult, PriceSignal } from '@/lib/api';
+import type { OcrSnapshot } from '@/lib/feedbackTypes';
+import { FeedbackCard } from './FeedbackCard';
 
 // Extended result type with offline/preview flags
 type ExtendedScanResult = ScanResult & { _offline?: boolean; _preview?: boolean };
@@ -25,6 +27,11 @@ interface ResultCardProps {
   onWatch: () => void;
   isWatched: boolean;
   onShowWhy: () => void;
+  // Feedback-related props
+  warehouseId: number;
+  clientOcrSnapshot?: OcrSnapshot | null;
+  capturedImageBlob?: Blob | null;
+  capturedImageDimensions?: { width: number; height: number } | null;
 }
 
 const decisionStyles = {
@@ -55,14 +62,35 @@ const scarcityStyles = {
   UNKNOWN: { emoji: '⚪', label: 'Unknown', color: 'text-gray-400' },
 };
 
-export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }: ResultCardProps) {
+export function ResultCard({
+  result,
+  onDismiss,
+  onWatch,
+  isWatched,
+  onShowWhy,
+  warehouseId,
+  clientOcrSnapshot,
+  capturedImageBlob,
+  capturedImageDimensions,
+}: ResultCardProps) {
   const [showPriceInfo, setShowPriceInfo] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
   const style = decisionStyles[result.decision] || decisionStyles.OK_PRICE;
   const Icon = style.icon;
   const scarcity = result.scarcity_level ? scarcityStyles[result.scarcity_level] : null;
   const isOffline = (result as ExtendedScanResult)._offline;
   const isPreview = (result as ExtendedScanResult)._preview;
   const hasCachedHistory = isOffline && result.history !== null;
+
+  // Build server OCR snapshot from result
+  const serverOcrSnapshot: OcrSnapshot = {
+    itemNumber: result.item_number,
+    price: result.price,
+    priceEnding: result.price_ending,
+    hasAsterisk: false, // TODO: Get from result if available
+    confidence: result.confidence,
+    description: result.description,
+  };
 
   return (
     <div className="min-h-screen bg-gray-900 overflow-y-auto">
@@ -281,7 +309,21 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
           </div>
         )}
 
-        {/* 7. Actions: Watch + Why */}
+        {/* 7. User Feedback */}
+        {!isPreview && (
+          <FeedbackCard
+            observationId={result.observation_id}
+            warehouseId={warehouseId}
+            clientOcrSnapshot={clientOcrSnapshot}
+            serverOcrSnapshot={serverOcrSnapshot}
+            capturedImageBlob={capturedImageBlob}
+            capturedImageDimensions={capturedImageDimensions}
+            feedbackSubmitted={feedbackSubmitted}
+            onFeedbackSubmitted={(positive) => setFeedbackSubmitted(true)}
+          />
+        )}
+
+        {/* 8. Actions: Watch + Why */}
         <div className="flex gap-3">
           <button
             onClick={onWatch}

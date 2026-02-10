@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "sqlite:///./pricetag.db"
     ENVIRONMENT: str = "development"
 
+    # Data directory for artifacts and other files
+    DATA_DIR: str = "./data"
+
     # CORS
     ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
 

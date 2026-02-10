@@ -4,16 +4,21 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useOnlineStatus } from './useOnlineStatus';
 import {
   syncPendingObservations,
+  syncPendingFeedback,
+  syncAll,
   registerBackgroundSync,
   type SyncResult,
 } from '@/lib/syncQueue';
 import { getUnsyncedCount } from '@/lib/observationCache';
+import { getUnsyncedFeedbackCount, getUnsyncedArtifactCount } from '@/lib/feedbackCache';
 
 export type SyncStatus = 'idle' | 'syncing' | 'success' | 'error';
 
 export interface UseBackgroundSyncResult {
   syncStatus: SyncStatus;
   pendingCount: number;
+  pendingFeedbackCount: number;
+  pendingArtifactCount: number;
   lastSyncResult: SyncResult | null;
   lastSyncTime: Date | null;
   isSyncing: boolean;
@@ -35,23 +40,31 @@ export function useBackgroundSync(): UseBackgroundSyncResult {
   const { isOnline } = useOnlineStatus();
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [pendingCount, setPendingCount] = useState(0);
+  const [pendingFeedbackCount, setPendingFeedbackCount] = useState(0);
+  const [pendingArtifactCount, setPendingArtifactCount] = useState(0);
   const [lastSyncResult, setLastSyncResult] = useState<SyncResult | null>(null);
   const [lastSyncTime, setLastSyncTime] = useState<Date | null>(null);
 
   const syncInProgressRef = useRef(false);
   const lastSyncRef = useRef<number>(0);
 
-  // Refresh pending count
+  // Refresh pending count (including feedback and artifacts)
   const refreshPendingCount = useCallback(async () => {
     try {
-      const count = await getUnsyncedCount();
-      setPendingCount(count);
+      const [obsCount, fbCount, artCount] = await Promise.all([
+        getUnsyncedCount(),
+        getUnsyncedFeedbackCount(),
+        getUnsyncedArtifactCount(),
+      ]);
+      setPendingCount(obsCount);
+      setPendingFeedbackCount(fbCount);
+      setPendingArtifactCount(artCount);
     } catch (error) {
       console.error('Failed to get pending count:', error);
     }
   }, []);
 
-  // Perform sync
+  // Perform sync (observations + feedback + artifacts)
   const performSync = useCallback(async (): Promise<SyncResult> => {
     // Prevent concurrent syncs
     if (syncInProgressRef.current) {
@@ -68,7 +81,8 @@ export function useBackgroundSync(): UseBackgroundSyncResult {
     setSyncStatus('syncing');
 
     try {
-      const result = await syncPendingObservations();
+      // Use syncAll to sync observations + feedback + artifacts
+      const result = await syncAll();
 
       setLastSyncResult(result);
       setLastSyncTime(new Date());
@@ -172,6 +186,8 @@ export function useBackgroundSync(): UseBackgroundSyncResult {
   return {
     syncStatus,
     pendingCount,
+    pendingFeedbackCount,
+    pendingArtifactCount,
     lastSyncResult,
     lastSyncTime,
     isSyncing: syncStatus === 'syncing',

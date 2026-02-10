@@ -1,6 +1,9 @@
 /**
  * Client-side Decision Engine
- * Mirrors server-side logic for offline use
+ * Based on Costco Price Tag Decoder v1.1
+ *
+ * Key principle: "Instant Savings = rules, Everything else = signals"
+ * Price endings are probabilistic signals, not official guarantees.
  */
 
 import type { Intent, Decision, ScarcityLevel, ConfidenceLevel, PriceHistory } from './api';
@@ -11,47 +14,81 @@ export interface DecisionResult {
   decisionRationale: string;
   decisionFactors: string[];
   priceSignals: Array<{ type: string; label: string; meaning: string }>;
+  urgency: 'LOW' | 'MEDIUM' | 'HIGH';
 }
 
-// Rationale templates
+// Urgency levels based on PDF matrix
+type UrgencyLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+
+function calculateUrgency(priceEnding: string | null, hasAsterisk: boolean): UrgencyLevel {
+  const isMarkdown = priceEnding === '.97' || priceEnding === '.00' || priceEnding === '.88';
+
+  if (isMarkdown && hasAsterisk) return 'HIGH';
+  if (isMarkdown) return 'MEDIUM';
+  if (hasAsterisk) return 'MEDIUM';
+  return 'LOW';
+}
+
+// Rationale templates - updated with accurate Costco info
 const RATIONALES: Record<string, string> = {
-  discontinued: "Discontinued item — no restock expected.",
-  clearance: "Clearance price — manager markdown won't last long.",
-  price_drop: "Price dropped significantly — good buying opportunity.",
-  price_up: "Price is up from recent levels — may drop back.",
-  regular_price: "Regular price with no discount — promotions likely.",
-  mfr_discount: "Manufacturer discount active — limited time offer.",
-  standard: "Standard Costco pricing — fair value for warehouse club.",
-  good_value: "Good value based on multiple positive signals.",
+  // Asterisk (The "Death Star")
+  asterisk_markdown: "Clearance + not restocking — buy now or accept it's gone.",
+  asterisk_only: "Not scheduled to reorder — this may be your last chance.",
+
+  // Price endings (signals, not rules)
+  clearance_97: "Markdown/clearance (.97) — buy if you want it.",
+  manager_markdown: "Manager markdown (.00) — store-specific deal, inspect + consider.",
+  special_clearance: "Special clearance (.88) — end-of-line, inspect carefully.",
+  vendor_promo: "Vendor promo pricing — check unit price for value.",
+  regular_price: "Regular Costco price (.99) — no urgency, promos likely.",
+
+  // Other
   scarcity_buy: "Limited availability — buy now if you need it.",
+  standard: "Standard Costco pricing — fair warehouse club value.",
+  good_value: "Good value based on multiple positive signals.",
 };
 
-// Price signal definitions
+// Price signal definitions - from Costco Price Tag Decoder v1.1
 const PRICE_SIGNALS: Record<string, { type: string; label: string; meaning: string }> = {
+  '.99': {
+    type: 'ending_99',
+    label: 'Regular Price',
+    meaning: 'Standard Costco pricing — no urgency',
+  },
   '.97': {
     type: 'ending_97',
-    label: 'Clearance Price',
-    meaning: "Manager markdown - often the lowest price you'll see",
+    label: 'Markdown / Clearance',
+    meaning: 'Manager markdown — buy if you want it',
   },
   '.00': {
     type: 'ending_00',
-    label: 'Regular Price',
-    meaning: 'Full price with no discount applied',
+    label: 'Manager Markdown',
+    meaning: 'Store-specific deal — inspect and consider buying',
+  },
+  '.88': {
+    type: 'ending_88',
+    label: 'Special Clearance',
+    meaning: 'End-of-line clearance — inspect carefully',
   },
   '.49': {
     type: 'ending_49',
-    label: 'Manufacturer Discount',
-    meaning: 'Temporary manufacturer rebate or promotion',
+    label: 'Vendor Promo',
+    meaning: 'Vendor promo or special pricing — check unit price',
   },
-  '.99': {
-    type: 'ending_99',
-    label: 'Standard Price',
-    meaning: 'Normal Costco pricing',
+  '.79': {
+    type: 'ending_79',
+    label: 'Vendor Promo',
+    meaning: 'Vendor promo or special pricing — check unit price',
+  },
+  '.89': {
+    type: 'ending_89',
+    label: 'Vendor Promo',
+    meaning: 'Vendor promo or special pricing — check unit price',
   },
   asterisk: {
     type: 'asterisk',
-    label: 'Being Discontinued',
-    meaning: "Item won't be restocked - last chance to buy",
+    label: 'Not Restocking',
+    meaning: 'Item not scheduled to reorder after current stock — may be your last chance',
   },
 };
 
@@ -66,7 +103,10 @@ export function makeDecision(
   const factors: string[] = [];
   const signals: Array<{ type: string; label: string; meaning: string }> = [];
 
-  // Add price signal
+  // Calculate urgency using PDF matrix
+  const urgency = calculateUrgency(priceEnding, hasAsterisk);
+
+  // Add price signals
   if (priceEnding && PRICE_SIGNALS[priceEnding]) {
     signals.push(PRICE_SIGNALS[priceEnding]);
   }
@@ -74,32 +114,73 @@ export function makeDecision(
     signals.push(PRICE_SIGNALS.asterisk);
   }
 
-  // Strong BUY NOW signals
+  // === HIGH URGENCY: Markdown + Asterisk ===
+  if (hasAsterisk && (priceEnding === '.97' || priceEnding === '.00' || priceEnding === '.88')) {
+    factors.push('Clearance price');
+    factors.push('Not restocking after current stock');
+    return {
+      decision: 'BUY_NOW',
+      decisionExplanation: "Clearance + not restocking. Buy now or accept it's gone.",
+      decisionRationale: RATIONALES.asterisk_markdown,
+      decisionFactors: factors,
+      priceSignals: signals,
+      urgency: 'HIGH',
+    };
+  }
+
+  // === MEDIUM URGENCY: Asterisk only ===
   if (hasAsterisk) {
-    factors.push('Item marked discontinued');
+    factors.push('Not scheduled for reorder');
     return {
       decision: 'BUY_NOW',
-      decisionExplanation: "This item is being discontinued and won't be restocked. If you want it, buy it now.",
-      decisionRationale: RATIONALES.discontinued,
+      decisionExplanation: "Item not scheduled to be restocked after current inventory. If you like it, this may be your last chance.",
+      decisionRationale: RATIONALES.asterisk_only,
       decisionFactors: factors,
       priceSignals: signals,
+      urgency: 'MEDIUM',
     };
   }
 
+  // === MEDIUM URGENCY: Markdown prices ===
   if (priceEnding === '.97') {
-    factors.push('Clearance pricing (.97)');
+    factors.push('Markdown/clearance (.97)');
     return {
       decision: 'BUY_NOW',
-      decisionExplanation: "Clearance price - this is typically the lowest price Costco will offer. Manager markdowns like this don't last long.",
-      decisionRationale: RATIONALES.clearance,
+      decisionExplanation: "Markdown price (.97) — buy if you want it. This signals clearance pricing.",
+      decisionRationale: RATIONALES.clearance_97,
       decisionFactors: factors,
       priceSignals: signals,
+      urgency: 'MEDIUM',
     };
   }
 
-  // Scarcity check - intent-aware
+  if (priceEnding === '.00') {
+    factors.push('Manager markdown (.00)');
+    return {
+      decision: 'BUY_NOW',
+      decisionExplanation: "Manager markdown (.00) — store-specific deal. Inspect the item and consider buying.",
+      decisionRationale: RATIONALES.manager_markdown,
+      decisionFactors: factors,
+      priceSignals: signals,
+      urgency: 'MEDIUM',
+    };
+  }
+
+  if (priceEnding === '.88') {
+    factors.push('Special clearance (.88)');
+    return {
+      decision: 'BUY_NOW',
+      decisionExplanation: "Special clearance (.88) — end-of-line pricing. Inspect carefully before buying.",
+      decisionRationale: RATIONALES.special_clearance,
+      decisionFactors: factors,
+      priceSignals: signals,
+      urgency: 'MEDIUM',
+    };
+  }
+
+  // === Scarcity check (intent-aware) ===
   if (scarcityLevel === 'LAST_UNITS') {
-    factors.push('Inventory declining');
+    factors.push('Very limited stock');
     if (intent === 'NEED_IT') {
       return {
         decision: 'BUY_NOW',
@@ -107,48 +188,50 @@ export function makeDecision(
         decisionRationale: RATIONALES.scarcity_buy,
         decisionFactors: factors,
         priceSignals: signals,
+        urgency: 'MEDIUM',
       };
     }
   } else if (scarcityLevel === 'LIMITED') {
     factors.push('Limited availability');
   }
 
-  // Manufacturer discount
-  if (priceEnding === '.49') {
-    factors.push('Manufacturer discount active');
-    if (factors.length >= 2) {
-      return {
-        decision: 'BUY_NOW',
-        decisionExplanation: `Good value: manufacturer discount with ${factors[0].toLowerCase()}.`,
-        decisionRationale: RATIONALES.mfr_discount,
-        decisionFactors: factors,
-        priceSignals: signals,
-      };
-    }
-  }
-
-  // Regular price
-  if (priceEnding === '.00') {
-    factors.push('Regular full price');
-    if (intent === 'BARGAIN_HUNTING') {
-      return {
-        decision: 'WAIT_IF_YOU_CAN',
-        decisionExplanation: 'Regular price with no discount. As a bargain hunter, wait for clearance.',
-        decisionRationale: RATIONALES.regular_price,
-        decisionFactors: factors,
-        priceSignals: signals,
-      };
-    }
+  // === Vendor promo pricing (.49, .79, .89) ===
+  if (priceEnding === '.49' || priceEnding === '.79' || priceEnding === '.89') {
+    factors.push(`Vendor promo (${priceEnding})`);
     return {
-      decision: 'WAIT_IF_YOU_CAN',
-      decisionExplanation: "Regular price with no discount. Costco often runs promotions - consider waiting for a better price unless you need it now.",
-      decisionRationale: RATIONALES.regular_price,
+      decision: 'OK_PRICE',
+      decisionExplanation: `Vendor promo or special pricing (${priceEnding}). Check the unit price to verify value.`,
+      decisionRationale: RATIONALES.vendor_promo,
       decisionFactors: factors,
       priceSignals: signals,
+      urgency: 'LOW',
     };
   }
 
-  // Multiple positive signals
+  // === LOW URGENCY: Regular price (.99) ===
+  if (priceEnding === '.99') {
+    factors.push('Regular price (.99)');
+    if (intent === 'BARGAIN_HUNTING') {
+      return {
+        decision: 'WAIT_IF_YOU_CAN',
+        decisionExplanation: 'Regular Costco price — no urgency. As a bargain hunter, wait for markdown or promo.',
+        decisionRationale: RATIONALES.regular_price,
+        decisionFactors: factors,
+        priceSignals: signals,
+        urgency: 'LOW',
+      };
+    }
+    return {
+      decision: 'OK_PRICE',
+      decisionExplanation: "Regular Costco price (.99) — no urgency. Promotions are likely in the future.",
+      decisionRationale: RATIONALES.regular_price,
+      decisionFactors: factors,
+      priceSignals: signals,
+      urgency: 'LOW',
+    };
+  }
+
+  // === Multiple positive signals ===
   if (factors.length >= 2) {
     return {
       decision: 'BUY_NOW',
@@ -156,10 +239,11 @@ export function makeDecision(
       decisionRationale: RATIONALES.good_value,
       decisionFactors: factors,
       priceSignals: signals,
+      urgency,
     };
   }
 
-  // Single positive signal
+  // === Single signal or default ===
   if (factors.length === 1) {
     return {
       decision: 'OK_PRICE',
@@ -167,6 +251,7 @@ export function makeDecision(
       decisionRationale: RATIONALES.standard,
       decisionFactors: factors,
       priceSignals: signals,
+      urgency: 'LOW',
     };
   }
 
@@ -178,6 +263,7 @@ export function makeDecision(
     decisionRationale: RATIONALES.standard,
     decisionFactors: factors,
     priceSignals: signals,
+    urgency: 'LOW',
   };
 }
 

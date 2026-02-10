@@ -141,14 +141,20 @@ export function ResultCard({ result, onDismiss, onWatch, isWatched, onShowWhy }:
               )}
             </div>
           </div>
-          {/* Price ending education (tap to expand) */}
+          {/* Price ending education (tap to expand) - from Costco Price Tag Decoder */}
           {showPriceInfo && result.price_ending && (
             <div className="mt-3 pt-3 border-t border-gray-700">
               <p className="text-gray-400 text-sm">
-                {result.price_ending === '.97' && '".97" indicates clearance — manager markdown'}
-                {result.price_ending === '.00' && '".00" indicates standard pricing — not clearance'}
-                {result.price_ending === '.49' && '".49" indicates manufacturer discount'}
-                {result.price_ending === '.99' && '".99" indicates normal Costco pricing'}
+                {result.price_ending === '.99' && '".99" = Regular Costco price — no urgency'}
+                {result.price_ending === '.97' && '".97" = Markdown/clearance — buy if you want it'}
+                {result.price_ending === '.00' && '".00" = Manager markdown (store-specific) — inspect + consider'}
+                {result.price_ending === '.88' && '".88" = Special clearance/end-of-line — inspect carefully'}
+                {result.price_ending === '.49' && '".49" = Vendor promo pricing — check unit price'}
+                {result.price_ending === '.79' && '".79" = Vendor promo pricing — check unit price'}
+                {result.price_ending === '.89' && '".89" = Vendor promo pricing — check unit price'}
+              </p>
+              <p className="text-gray-500 text-xs mt-1 italic">
+                Note: Price endings are signals, not guarantees.
               </p>
             </div>
           )}

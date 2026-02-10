@@ -310,6 +310,157 @@ export default function Home() {
     }
   };
 
+  // V3: Burst capture handler - runs OCR on multiple frames and uses voting
+  const handleBurstCapture = async (blobs: Blob[], analyses: FrameAnalysis[]) => {
+    if (!warehouseId) {
+      setState('warehouse-select');
+      return;
+    }
+
+    setState('processing');
+    setError(null);
+
+    // Store best frame analysis
+    if (analyses.length > 0) {
+      const bestAnalysis = analyses.reduce((best, curr) =>
+        curr.blurScore > best.blurScore ? curr : best
+      );
+      setFrameAnalysis(bestAnalysis);
+    }
+
+    console.log('[Burst] Processing', blobs.length, 'frames');
+
+    try {
+      // Run OCR on all frames and collect results
+      const ocrResults = await Promise.all(
+        blobs.map(blob => runOcr(blob).catch(() => null))
+      );
+
+      // Filter successful results
+      const validResults = ocrResults.filter(r =>
+        r && r.success && r.itemNumber && r.price !== null
+      );
+
+      console.log('[Burst] Valid OCR results:', validResults.length, 'of', blobs.length);
+
+      if (validResults.length === 0) {
+        // No valid results from any frame
+        setError('Could not read price tag from any frame. Try holding steadier or better lighting.');
+        setState('error');
+        return;
+      }
+
+      // Vote on item number (most common)
+      const itemNumberCounts = new Map<string, number>();
+      validResults.forEach(r => {
+        if (r && r.itemNumber) {
+          const count = itemNumberCounts.get(r.itemNumber) || 0;
+          itemNumberCounts.set(r.itemNumber, count + 1);
+        }
+      });
+
+      let bestItemNumber = '';
+      let maxItemCount = 0;
+      itemNumberCounts.forEach((count, itemNumber) => {
+        if (count > maxItemCount) {
+          maxItemCount = count;
+          bestItemNumber = itemNumber;
+        }
+      });
+
+      // Vote on price (most common)
+      const priceCounts = new Map<string, { price: number; count: number }>();
+      validResults.forEach(r => {
+        if (r && r.price !== null) {
+          const key = r.price.toFixed(2);
+          const existing = priceCounts.get(key);
+          if (existing) {
+            existing.count++;
+          } else {
+            priceCounts.set(key, { price: r.price, count: 1 });
+          }
+        }
+      });
+
+      let bestPrice = 0;
+      let maxPriceCount = 0;
+      priceCounts.forEach(({ price, count }) => {
+        if (count > maxPriceCount) {
+          maxPriceCount = count;
+          bestPrice = price;
+        }
+      });
+
+      // Get other fields from best result
+      const bestResult = validResults.find(r =>
+        r && r.itemNumber === bestItemNumber && r.price === bestPrice
+      ) || validResults[0];
+
+      if (!bestResult) {
+        setError('Could not read price tag. Try again.');
+        setState('error');
+        return;
+      }
+
+      console.log('[Burst] Voted result:', {
+        itemNumber: bestItemNumber,
+        price: bestPrice,
+        confidence: `${maxItemCount}/${validResults.length} frames agree on item, ${maxPriceCount}/${validResults.length} on price`
+      });
+
+      // Build result
+      const cachedHistory = await getCachedHistory(warehouseId, bestItemNumber);
+
+      let scanResult = buildOfflineResult(
+        `burst-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        bestItemNumber,
+        bestPrice,
+        bestResult.priceEnding,
+        bestResult.hasAsterisk,
+        bestResult.description,
+        bestResult.unitPrice,
+        bestResult.unitMeasure,
+        bestResult.confidence,
+        intent
+      ) as ScanResult;
+
+      // Enhance with cached history if available
+      if (cachedHistory) {
+        const enhancedDecision = makeDecision(
+          bestPrice,
+          bestResult.priceEnding,
+          bestResult.hasAsterisk,
+          intent,
+          cachedHistory,
+          null
+        );
+        scanResult = {
+          ...scanResult,
+          history: cachedHistory,
+          decision: enhancedDecision.decision,
+          decision_explanation: enhancedDecision.decisionExplanation,
+          decision_rationale: enhancedDecision.decisionRationale,
+          decision_factors: enhancedDecision.decisionFactors,
+        };
+      }
+
+      // Save to local DB
+      await saveResult(scanResult, warehouseId, isOnline);
+      if (!isOnline) {
+        await refreshPendingCount();
+      }
+
+      setResult(scanResult);
+      setState('result');
+
+    } catch (err) {
+      console.error('[Burst] Error:', err);
+      const message = err instanceof Error ? err.message : 'Burst capture failed';
+      setError(message);
+      setState('error');
+    }
+  };
+
   // Warehouse selection screen
   if (state === 'warehouse-select') {
     return (
@@ -381,9 +532,10 @@ export default function Home() {
         </button>
       </div>
 
-      {/* Smart Camera with blur detection and auto-capture */}
+      {/* Smart Camera with blur detection, burst capture, and auto-capture */}
       <SmartCamera
         onCapture={handleCapture}
+        onBurstCapture={handleBurstCapture}
         disabled={state !== 'camera'}
         onChangeWarehouse={handleChangeWarehouse}
       />

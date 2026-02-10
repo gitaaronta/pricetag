@@ -30,17 +30,28 @@ interface Point {
   y: number;
 }
 
-// Configuration
-const BLUR_THRESHOLD = 0.35;        // minimum blur score to consider sharp
-const STABILITY_THRESHOLD = 0.85;   // minimum stability for auto-capture
-const MIN_TAG_AREA_RATIO = 0.05;    // minimum tag area as ratio of frame
-const MAX_TAG_AREA_RATIO = 0.85;    // maximum tag area as ratio of frame
-const ASPECT_RATIO_MIN = 1.2;       // minimum width/height ratio for tag
-const ASPECT_RATIO_MAX = 3.5;       // maximum width/height ratio for tag
+// Configuration - lowered for shaky hands accessibility
+const BLUR_THRESHOLD = 0.15;        // minimum blur score (lowered from 0.35)
+const STABILITY_THRESHOLD = 0.50;   // minimum stability (lowered from 0.85)
+const MIN_TAG_AREA_RATIO = 0.03;    // minimum tag area as ratio of frame
+const MAX_TAG_AREA_RATIO = 0.90;    // maximum tag area as ratio of frame
+const ASPECT_RATIO_MIN = 1.0;       // minimum width/height ratio for tag
+const ASPECT_RATIO_MAX = 4.0;       // maximum width/height ratio for tag
 
 // Rolling buffer for stability detection
-const STABILITY_BUFFER_SIZE = 5;
+const STABILITY_BUFFER_SIZE = 3;    // reduced from 5 for faster response
 let stabilityBuffer: TagBounds[] = [];
+
+// Frame buffer for "best frame" selection
+const FRAME_BUFFER_SIZE = 10;
+
+export interface BufferedFrame {
+  imageData: ImageData;
+  analysis: FrameAnalysis;
+  canvas: HTMLCanvasElement;
+}
+
+let frameBuffer: BufferedFrame[] = [];
 
 /**
  * Analyze a video frame for blur, tag detection, and stability
@@ -587,4 +598,98 @@ export function extractTagROI(
   );
 
   return roiCanvas;
+}
+
+/**
+ * Add a frame to the rolling buffer for "best frame" selection
+ */
+export function addToFrameBuffer(
+  canvas: HTMLCanvasElement,
+  analysis: FrameAnalysis
+): void {
+  // Clone the canvas
+  const clonedCanvas = document.createElement('canvas');
+  clonedCanvas.width = canvas.width;
+  clonedCanvas.height = canvas.height;
+  const ctx = clonedCanvas.getContext('2d')!;
+  ctx.drawImage(canvas, 0, 0);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+  frameBuffer.push({
+    imageData,
+    analysis,
+    canvas: clonedCanvas,
+  });
+
+  // Keep buffer size limited
+  if (frameBuffer.length > FRAME_BUFFER_SIZE) {
+    frameBuffer.shift();
+  }
+}
+
+/**
+ * Get the best frame from the buffer (highest blur score with tag detected)
+ */
+export function getBestFrame(): BufferedFrame | null {
+  if (frameBuffer.length === 0) return null;
+
+  // Sort by quality score: prioritize tag detection, then blur score
+  const sorted = [...frameBuffer].sort((a, b) => {
+    // First priority: tag detected
+    if (a.analysis.tagDetected && !b.analysis.tagDetected) return -1;
+    if (!a.analysis.tagDetected && b.analysis.tagDetected) return 1;
+
+    // Second priority: blur score (higher is better)
+    return b.analysis.blurScore - a.analysis.blurScore;
+  });
+
+  return sorted[0];
+}
+
+/**
+ * Get multiple best frames for burst capture / multi-frame OCR
+ */
+export function getBestFrames(count: number = 3): BufferedFrame[] {
+  if (frameBuffer.length === 0) return [];
+
+  // Sort by blur score (higher is better)
+  const sorted = [...frameBuffer].sort((a, b) => {
+    // Prioritize frames with tag detected
+    const aScore = a.analysis.blurScore + (a.analysis.tagDetected ? 0.5 : 0);
+    const bScore = b.analysis.blurScore + (b.analysis.tagDetected ? 0.5 : 0);
+    return bScore - aScore;
+  });
+
+  return sorted.slice(0, count);
+}
+
+/**
+ * Clear the frame buffer
+ */
+export function clearFrameBuffer(): void {
+  frameBuffer = [];
+}
+
+/**
+ * Get current frame buffer size
+ */
+export function getFrameBufferSize(): number {
+  return frameBuffer.length;
+}
+
+/**
+ * Convert a buffered frame to a Blob for OCR
+ */
+export async function frameToBlob(frame: BufferedFrame): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    frame.canvas.toBlob(
+      (blob) => {
+        if (blob) resolve(blob);
+        else reject(new Error('Failed to convert frame to blob'));
+      },
+      'image/jpeg',
+      0.9
+    );
+  });
 }

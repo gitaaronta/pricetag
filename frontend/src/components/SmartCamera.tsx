@@ -1,26 +1,34 @@
 'use client';
 
 import { useRef, useState, useEffect, useCallback } from 'react';
-import { Camera, Zap, ZapOff, Settings, X, RefreshCw } from 'lucide-react';
+import { Camera, Zap, ZapOff, Settings, RefreshCw, Layers } from 'lucide-react';
 import {
   analyzeFrame,
   shouldAutoCapture,
   getCaptureQuality,
   resetStabilityTracking,
   extractTagROI,
+  addToFrameBuffer,
+  getBestFrame,
+  getBestFrames,
+  clearFrameBuffer,
+  getFrameBufferSize,
+  frameToBlob,
   type FrameAnalysis,
   type TagBounds,
+  type BufferedFrame,
 } from '@/lib/frameAnalyzer';
 
 interface SmartCameraProps {
   onCapture: (imageBlob: Blob, analysis: FrameAnalysis) => void;
+  onBurstCapture?: (blobs: Blob[], analyses: FrameAnalysis[]) => void;
   onChangeWarehouse: () => void;
   disabled?: boolean;
 }
 
-type CaptureMode = 'auto' | 'manual';
+type CaptureMode = 'auto' | 'manual' | 'burst';
 
-export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCameraProps) {
+export function SmartCamera({ onCapture, onBurstCapture, onChangeWarehouse, disabled }: SmartCameraProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const analysisCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,11 +37,12 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
 
   const [isActive, setIsActive] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [captureMode, setCaptureMode] = useState<CaptureMode>('auto');
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('burst'); // Default to burst for shaky hands
   const [currentAnalysis, setCurrentAnalysis] = useState<FrameAnalysis | null>(null);
   const [autoCaptureReady, setAutoCaptureReady] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [showGuide, setShowGuide] = useState(true);
+  const [bufferSize, setBufferSize] = useState(0);
 
   // Countdown state for auto-capture
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -41,7 +50,7 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
 
   // Frame analysis settings
   const ANALYSIS_INTERVAL = 100; // ms between frame analyses
-  const AUTO_CAPTURE_DELAY = 1000; // ms to wait after conditions met
+  const AUTO_CAPTURE_DELAY = 800; // reduced from 1000ms for faster response
   const lastAnalysisRef = useRef<number>(0);
 
   // Start camera
@@ -117,13 +126,17 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
           const analysis = analyzeFrame(canvas, ctx);
           setCurrentAnalysis(analysis);
 
-          // Check for auto-capture
+          // Always buffer frames for burst/best-frame capture
+          addToFrameBuffer(canvas, analysis);
+          setBufferSize(getFrameBufferSize());
+
+          // Check for auto-capture (only in auto mode)
           if (captureMode === 'auto' && !disabled && !isCapturing) {
             if (shouldAutoCapture(analysis)) {
               if (!autoCaptureReady) {
                 setAutoCaptureReady(true);
-                // Start countdown
-                setCountdown(3);
+                // Start countdown (reduced to 2 for faster capture)
+                setCountdown(2);
                 startCountdown(analysis);
               }
             } else {
@@ -135,6 +148,18 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
                   clearTimeout(countdownRef.current);
                   countdownRef.current = null;
                 }
+              }
+            }
+          }
+
+          // Burst mode: auto-capture when we have enough buffered frames with a tag
+          if (captureMode === 'burst' && !disabled && !isCapturing) {
+            const bufSize = getFrameBufferSize();
+            if (bufSize >= 5 && analysis.tagDetected) {
+              if (!autoCaptureReady) {
+                setAutoCaptureReady(true);
+                setCountdown(1); // Quick countdown
+                startCountdown(analysis);
               }
             }
           }
@@ -166,7 +191,7 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
     countdownRef.current = setTimeout(tick, AUTO_CAPTURE_DELAY / 3);
   }, []);
 
-  // Perform capture
+  // Perform capture - uses best frame from buffer for shaky hands support
   const doCapture = useCallback(async (analysis?: FrameAnalysis) => {
     if (!videoRef.current || !canvasRef.current || isCapturing || disabled) return;
 
@@ -174,32 +199,68 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
     setCountdown(null);
 
     try {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
+      // Burst mode: capture multiple frames for voting
+      if (captureMode === 'burst' && onBurstCapture) {
+        const bestFrames = getBestFrames(3);
+        if (bestFrames.length > 0) {
+          const blobs: Blob[] = [];
+          const analyses: FrameAnalysis[] = [];
 
-      if (!ctx) throw new Error('Canvas context not available');
+          for (const frame of bestFrames) {
+            const blob = await frameToBlob(frame);
+            blobs.push(blob);
+            analyses.push(frame.analysis);
+          }
 
-      // Full resolution capture
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0);
+          // Haptic feedback
+          if ('vibrate' in navigator) {
+            navigator.vibrate([50, 30, 50]); // Double vibrate for burst
+          }
 
-      // Get final analysis if not provided
-      const finalAnalysis = analysis || (currentAnalysis ?? {
-        blurScore: 0.5,
-        isSharp: true,
-        tagDetected: false,
-        tagBounds: null,
-        stability: 0.5,
-        timestamp: Date.now(),
-      });
+          onBurstCapture(blobs, analyses);
+          clearFrameBuffer();
+          return;
+        }
+      }
+
+      // Single capture mode: use best frame from buffer
+      const bestFrame = getBestFrame();
+      let captureCanvas: HTMLCanvasElement;
+      let finalAnalysis: FrameAnalysis;
+
+      if (bestFrame && bestFrame.analysis.blurScore > (currentAnalysis?.blurScore || 0)) {
+        // Use the best buffered frame (sharper than current)
+        captureCanvas = bestFrame.canvas;
+        finalAnalysis = bestFrame.analysis;
+        console.log('[SmartCamera] Using best buffered frame, blur:', bestFrame.analysis.blurScore);
+      } else {
+        // Use current frame
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) throw new Error('Canvas context not available');
+
+        // Full resolution capture
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0);
+
+        captureCanvas = canvas;
+        finalAnalysis = analysis || (currentAnalysis ?? {
+          blurScore: 0.5,
+          isSharp: true,
+          tagDetected: false,
+          tagBounds: null,
+          stability: 0.5,
+          timestamp: Date.now(),
+        });
+      }
 
       // If tag detected, extract ROI
-      let captureCanvas = canvas;
-      if (finalAnalysis.tagBounds && finalAnalysis.tagBounds.confidence > 0.3) {
-        // Scale bounds to full resolution
-        const scale = video.videoWidth / (analysisCanvasRef.current?.width || video.videoWidth);
+      if (finalAnalysis.tagBounds && finalAnalysis.tagBounds.confidence > 0.2) {
+        // Scale bounds if needed
+        const scale = captureCanvas.width / (analysisCanvasRef.current?.width || captureCanvas.width);
         const scaledBounds: TagBounds = {
           x: finalAnalysis.tagBounds.x * scale,
           y: finalAnalysis.tagBounds.y * scale,
@@ -208,7 +269,7 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
           confidence: finalAnalysis.tagBounds.confidence,
         };
 
-        captureCanvas = extractTagROI(canvas, scaledBounds, 20);
+        captureCanvas = extractTagROI(captureCanvas, scaledBounds, 20);
       }
 
       // Convert to blob
@@ -226,6 +287,7 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
       }
 
       onCapture(blob, finalAnalysis);
+      clearFrameBuffer();
     } catch (err) {
       console.error('[SmartCamera] Capture error:', err);
     } finally {
@@ -233,18 +295,23 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
       setAutoCaptureReady(false);
       resetStabilityTracking();
     }
-  }, [currentAnalysis, disabled, isCapturing, onCapture]);
+  }, [currentAnalysis, disabled, isCapturing, onCapture, onBurstCapture, captureMode]);
 
   // Manual capture
   const handleManualCapture = useCallback(() => {
     doCapture(currentAnalysis || undefined);
   }, [currentAnalysis, doCapture]);
 
-  // Toggle capture mode
+  // Toggle capture mode (cycles: burst -> auto -> manual)
   const toggleCaptureMode = useCallback(() => {
-    setCaptureMode((prev) => (prev === 'auto' ? 'manual' : 'auto'));
+    setCaptureMode((prev) => {
+      if (prev === 'burst') return 'auto';
+      if (prev === 'auto') return 'manual';
+      return 'burst';
+    });
     setAutoCaptureReady(false);
     setCountdown(null);
+    clearFrameBuffer();
     if (countdownRef.current) {
       clearTimeout(countdownRef.current);
       countdownRef.current = null;
@@ -352,7 +419,12 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
           onClick={toggleCaptureMode}
           className="flex items-center gap-2 bg-black/50 rounded-full px-3 py-2 text-white"
         >
-          {captureMode === 'auto' ? (
+          {captureMode === 'burst' ? (
+            <>
+              <Layers size={16} className="text-blue-400" />
+              <span className="text-sm">Burst</span>
+            </>
+          ) : captureMode === 'auto' ? (
             <>
               <Zap size={16} className="text-yellow-400" />
               <span className="text-sm">Auto</span>
@@ -366,38 +438,41 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
         </button>
       </div>
 
-      {/* Bottom bar with stats and capture button */}
-      <div className="absolute bottom-0 left-0 right-0 p-4">
-        {/* Stats bar */}
-        <div className="flex justify-between mb-4 px-4">
-          <div className="flex items-center gap-4 text-white/70 text-xs">
-            <span>Blur: {currentAnalysis ? Math.round(currentAnalysis.blurScore * 100) : 0}%</span>
-            <span>Stable: {currentAnalysis ? Math.round(currentAnalysis.stability * 100) : 0}%</span>
-            <span>Tag: {currentAnalysis?.tagDetected ? 'Yes' : 'No'}</span>
+      {/* Bottom bar with stats and capture button - safe area aware */}
+      <div
+        className="absolute bottom-0 left-0 right-0 p-3"
+        style={{ paddingBottom: 'max(12px, env(safe-area-inset-bottom))' }}
+      >
+        {/* Stats bar - compact */}
+        <div className="flex justify-between mb-2 px-2">
+          <div className="flex items-center gap-3 text-white/70 text-xs">
+            <span>Sharp: {currentAnalysis ? Math.round(currentAnalysis.blurScore * 100) : 0}%</span>
+            <span>Buf: {bufferSize}</span>
+            {currentAnalysis?.tagDetected && <span className="text-green-400">Tag ✓</span>}
           </div>
           <button
             onClick={() => setShowGuide(!showGuide)}
-            className="text-white/70 text-xs"
+            className="text-white/70 text-xs px-2"
           >
-            {showGuide ? 'Hide guide' : 'Show guide'}
+            {showGuide ? 'Hide' : 'Guide'}
           </button>
         </div>
 
-        {/* Action buttons */}
-        <div className="flex items-center justify-center gap-6">
+        {/* Action buttons - smaller for mobile */}
+        <div className="flex items-center justify-center gap-4">
           {/* Warehouse button */}
           <button
             onClick={onChangeWarehouse}
-            className="p-3 bg-black/50 rounded-full text-white"
+            className="p-2.5 bg-black/50 rounded-full text-white"
           >
-            <Settings size={24} />
+            <Settings size={20} />
           </button>
 
-          {/* Capture button */}
+          {/* Capture button - smaller */}
           <button
             onClick={handleManualCapture}
             disabled={disabled || isCapturing}
-            className={`w-20 h-20 rounded-full flex items-center justify-center ${
+            className={`w-16 h-16 rounded-full flex items-center justify-center border-4 border-white/30 ${
               disabled || isCapturing
                 ? 'bg-gray-500/50'
                 : quality === 'excellent' || quality === 'good'
@@ -406,27 +481,30 @@ export function SmartCamera({ onCapture, onChangeWarehouse, disabled }: SmartCam
             }`}
           >
             {isCapturing ? (
-              <RefreshCw size={32} className="text-gray-700 animate-spin" />
+              <RefreshCw size={24} className="text-gray-700 animate-spin" />
+            ) : captureMode === 'burst' ? (
+              <Layers size={24} className="text-gray-700" />
             ) : (
-              <Camera size={32} className="text-gray-700" />
+              <Camera size={24} className="text-gray-700" />
             )}
           </button>
 
-          {/* Flip camera placeholder (for future) */}
-          <div className="w-12" />
+          {/* Buffer indicator for burst mode */}
+          <div className="w-10 flex justify-center">
+            {captureMode === 'burst' && bufferSize > 0 && (
+              <span className="text-white/70 text-xs">{bufferSize}/10</span>
+            )}
+          </div>
         </div>
 
-        {/* Auto-capture hint */}
-        {captureMode === 'auto' && !autoCaptureReady && (
-          <p className="text-center text-white/60 text-xs mt-3">
-            Hold camera steady on price tag for auto-capture
-          </p>
-        )}
-        {captureMode === 'auto' && autoCaptureReady && countdown === null && (
-          <p className="text-center text-green-400 text-xs mt-3">
-            Ready! Hold steady...
-          </p>
-        )}
+        {/* Mode-specific hints - compact */}
+        <p className="text-center text-white/50 text-xs mt-2">
+          {captureMode === 'burst' && !autoCaptureReady && 'Point at tag - captures best of multiple frames'}
+          {captureMode === 'burst' && autoCaptureReady && <span className="text-green-400">Capturing best frames...</span>}
+          {captureMode === 'auto' && !autoCaptureReady && 'Hold steady for auto-capture'}
+          {captureMode === 'auto' && autoCaptureReady && <span className="text-green-400">Hold steady...</span>}
+          {captureMode === 'manual' && 'Tap to capture (uses best buffered frame)'}
+        </p>
       </div>
 
       {/* Error display */}
